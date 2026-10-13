@@ -1,5 +1,7 @@
 package com.agy.install;
 
+import android.text.TextUtils;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,6 +32,6 @@ public final class TarPath {
             }
             parts.add(part);
         }
-        return String.join("/", parts);
+        return TextUtils.join("/", parts);
     }
 }

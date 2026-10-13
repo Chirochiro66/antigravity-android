@@ -38,6 +38,7 @@ import com.agy.ui.splash.SplashController;
 import com.agy.ui.webview.AgyWebChromeClient;
 import com.agy.ui.webview.DesktopModePrefs;
 import com.agy.ui.webview.WebViewHost;
+import com.agy.util.SensitiveDataRedactor;
 import com.agy.util.ViewParams;
 
 /**
@@ -52,7 +53,8 @@ public class MainActivity extends Activity
     private static final int REQUEST_STORAGE = 100;
     private static final int REQUEST_FILE_CHOOSER = 1002;
     private static final long SPLASH_TIMEOUT_MS = 45000;
-    private static final long POLL_INTERVAL_MS = 50;
+    private static final long POLL_STARTUP_INTERVAL_MS = 250;
+    private static final long POLL_READY_INTERVAL_MS = 1000;
 
     public static volatile MainActivity activeActivity;
 
@@ -68,6 +70,7 @@ public class MainActivity extends Activity
     private FrameLayout rootLayout;
 
     private boolean appLoaded = false;
+    private boolean activityResumed = false;
     private int loadedGeneration = -1;
     private long splashDeadline;
 
@@ -81,7 +84,10 @@ public class MainActivity extends Activity
         @Override
         public void run() {
             watchCore();
-            handler.postDelayed(this, POLL_INTERVAL_MS);
+            if (activityResumed) {
+                handler.postDelayed(this, appLoaded
+                        ? POLL_READY_INTERVAL_MS : POLL_STARTUP_INTERVAL_MS);
+            }
         }
     };
 
@@ -137,7 +143,7 @@ public class MainActivity extends Activity
         oauthManager = new OAuthManager();
         runtimeManager = new RuntimeManager(this);
         shizukuBridge = new ShizukuBridge(this);
-        androidBridge = new AndroidBridge(this, runtimeManager, shizukuBridge, oauthManager, themeManager);
+        androidBridge = new AndroidBridge(this, runtimeManager, shizukuBridge, themeManager);
         androidBridge.setActivity(this);
         webViewHost = new WebViewHost(this, themeManager, oauthManager, androidBridge, this);
         webViewHost.setListener(this);
@@ -158,8 +164,6 @@ public class MainActivity extends Activity
         splashDeadline = System.currentTimeMillis() + SPLASH_TIMEOUT_MS;
         requestStoragePermissions();
         startCoreService();
-
-        handler.postDelayed(pollServer, 30);
     }
 
     private void startCoreService() {
@@ -201,7 +205,7 @@ public class MainActivity extends Activity
      */
     @Override
     public void onPageFinished(String url) {
-        Log.i(TAG, "onPageFinished " + url);
+        Log.i(TAG, "onPageFinished " + SensitiveDataRedactor.safeUrl(url));
     }
 
     /** Idempotent; called by AndroidBridge.onUiReady() on the main thread. */
@@ -224,6 +228,7 @@ public class MainActivity extends Activity
 
     @Override
     protected void onDestroy() {
+        activityResumed = false;
         if (activeActivity == this) {
             activeActivity = null;
         }
@@ -251,29 +256,31 @@ public class MainActivity extends Activity
 
     @Override
     protected void onPause() {
-        super.onPause();
+        activityResumed = false;
+        handler.removeCallbacks(pollServer);
         if (webViewHost != null) {
-            AppLifecycle.pauseTimers(webViewHost.getWebView());
+            AppLifecycle.pause(webViewHost.getWebView());
         }
+        super.onPause();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         com.agy.theme.LauncherIconSwitcher.onAppBackgrounded(this);
-        if (webViewHost != null) {
-            AppLifecycle.pauseTimers(webViewHost.getWebView());
-        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        activityResumed = true;
         activeActivity = this;
         if (webViewHost != null) {
             AppLifecycle.resume(webViewHost.getWebView());
         }
         refreshTheme();
+        handler.removeCallbacks(pollServer);
+        handler.post(pollServer);
     }
 
     private void refreshTheme() {

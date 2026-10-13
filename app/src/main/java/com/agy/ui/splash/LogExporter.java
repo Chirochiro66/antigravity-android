@@ -9,6 +9,8 @@ import android.os.Environment;
 import android.widget.Toast;
 
 import com.agy.core.CoreRuntimeState;
+import com.agy.runtime.RuntimeConfig;
+import com.agy.util.SensitiveDataRedactor;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -35,8 +37,8 @@ public final class LogExporter {
         StringBuilder sb = new StringBuilder();
         sb.append("=== Antigravity Diagnostics ===\n");
         sb.append("Timestamp: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append("\n");
-        String verName = "2.2.0";
-        long verCode = 4;
+        String verName = RuntimeConfig.APP_VERSION_NAME;
+        long verCode = RuntimeConfig.APP_VERSION_CODE;
         if (context != null) {
             try {
                 android.content.pm.PackageInfo pi = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
@@ -51,8 +53,10 @@ public final class LogExporter {
         sb.append("Android OS: ").append(Build.VERSION.RELEASE)
                 .append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
         sb.append("Supported ABIs: ").append(Arrays.toString(Build.SUPPORTED_ABIS)).append("\n");
-        sb.append("Last Error: ").append(CoreRuntimeState.lastError != null ? CoreRuntimeState.lastError : "none").append("\n");
-        sb.append("Server URL: ").append(CoreRuntimeState.serverUrl != null ? CoreRuntimeState.serverUrl : "none").append("\n");
+        sb.append("Last Error: ").append(CoreRuntimeState.lastError != null
+                ? SensitiveDataRedactor.redactLine(CoreRuntimeState.lastError) : "none").append("\n");
+        sb.append("Server URL: ").append(CoreRuntimeState.serverUrl != null
+                ? SensitiveDataRedactor.safeUrl(CoreRuntimeState.serverUrl) : "none").append("\n");
         sb.append("\n=== Core Log (files/logs/core.log) ===\n");
 
         if (context == null) {
@@ -76,7 +80,7 @@ public final class LogExporter {
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(fis, UTF8))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            sb.append(line).append("\n");
+                            sb.append(SensitiveDataRedactor.redactLine(line)).append("\n");
                         }
                     }
                 }

@@ -27,13 +27,16 @@ public final class WebViewLifecycle {
         }
     }
 
-    public static void resumeTimers(WebView webView) {
+    /** Pauses page callbacks and timers while the host activity is not visible. */
+    public static void pause(WebView webView) {
         if (webView == null) {
             return;
         }
         try {
-            webView.resumeTimers();
-        } catch (Exception ignored) {
+            webView.onPause();
+            webView.pauseTimers();
+        } catch (Exception e) {
+            Log.w(TAG, "failed to pause webView", e);
         }
     }
 

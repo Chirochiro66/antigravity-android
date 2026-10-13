@@ -14,7 +14,8 @@ import android.webkit.WebViewClient;
 
 import com.agy.bridge.AndroidBridge;
 import com.agy.oauth.OAuthManager;
-import com.agy.util.LoopbackHost;
+import com.agy.util.SensitiveDataRedactor;
+import com.agy.util.TrustedCoreOrigin;
 
 /** WebView client: OAuth interception, loopback TLS, and static asset serving. */
 public final class AgyWebViewClient extends WebViewClient {
@@ -39,23 +40,35 @@ public final class AgyWebViewClient extends WebViewClient {
     @Override
     public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err) {
         if (req != null && req.getUrl() != null) {
-            Log.w(TAG, "Resource load error: " + req.getUrl() + " err="
+            Log.w(TAG, "Resource load error: "
+                    + SensitiveDataRedactor.safeUrl(req.getUrl().toString()) + " err="
                     + (err != null ? err.getDescription() : "unknown"));
         }
     }
 
     @Override
     public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest request) {
-        String url = request != null && request.getUrl() != null
-                ? request.getUrl().toString() : null;
-        Log.i(TAG, "shouldOverrideUrlLoading url=" + url);
-        return handleNavigation(v, url);
+        if (request == null || request.getUrl() == null) {
+            return true;
+        }
+        Uri uri = request.getUrl();
+        Log.i(TAG, "shouldOverrideUrlLoading url="
+                + SensitiveDataRedactor.safeUrl(uri.toString()));
+        if (!request.isForMainFrame()) {
+            // The web UI intentionally embeds HTTPS previews. Keep those working,
+            // while refusing file/javascript/intent and other non-web subframes.
+            String scheme = uri.getScheme();
+            return !"https".equalsIgnoreCase(scheme)
+                    && !"about".equalsIgnoreCase(scheme);
+        }
+        return handleNavigation(v, uri.toString());
     }
 
     @Override
     @SuppressWarnings("deprecation")
     public boolean shouldOverrideUrlLoading(WebView v, String url) {
-        Log.i(TAG, "shouldOverrideUrlLoading(deprecated) url=" + url);
+        Log.i(TAG, "shouldOverrideUrlLoading(deprecated) url="
+                + SensitiveDataRedactor.safeUrl(url));
         return handleNavigation(v, url);
     }
 
@@ -65,47 +78,63 @@ public final class AgyWebViewClient extends WebViewClient {
         }
         try {
             Uri uri = Uri.parse(url);
-            if (!LoopbackHost.isLoopback(uri)) {
-                Log.i(TAG, "non-loopback navigation -> external browser: " + url);
-                return oauth.openInBrowser(context, url);
+            if (!TrustedCoreOrigin.matches(uri, bridge.getEnginePort())) {
+                String scheme = uri.getScheme();
+                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                    Log.i(TAG, "non-core navigation -> external browser: "
+                            + SensitiveDataRedactor.safeUrl(url));
+                    oauth.openInBrowser(context, url);
+                }
+                // Never fall through to render a non-core top-level document in
+                // the WebView if no browser handler is installed.
+                return true;
             }
         } catch (Exception e) {
-            Log.w(TAG, "cannot parse uri: " + url, e);
+            Log.w(TAG, "cannot parse uri: " + SensitiveDataRedactor.safeUrl(url), e);
+            return true;
         }
         return oauth.intercept(context, url);
     }
 
     /**
      * Server-side (3xx) redirects do not always reach shouldOverrideUrlLoading;
-     * catch non-loopback URLs here and stop the WebView from rendering them.
+     * only the exact core origin may remain in the bridge-enabled WebView.
      */
     @Override
     public void onPageStarted(WebView v, String url, Bitmap favicon) {
-        if (url != null && !url.equals("about:blank")) {
-            try {
-                Uri uri = Uri.parse(url);
-                if (!LoopbackHost.isLoopback(uri)) {
-                    Log.i(TAG, "onPageStarted intercepted non-loopback url: " + url);
-                    v.stopLoading();
+        if (url == null || url.isEmpty() || url.equals("about:blank")) {
+            return;
+        }
+        try {
+            Uri uri = Uri.parse(url);
+            if (!TrustedCoreOrigin.matches(uri, bridge.getEnginePort())) {
+                Log.i(TAG, "onPageStarted intercepted non-core url: "
+                        + SensitiveDataRedactor.safeUrl(url));
+                v.stopLoading();
+                String scheme = uri.getScheme();
+                if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
                     oauth.openInBrowser(context, url);
-                    return;
                 }
-            } catch (Exception ignored) {
+                return;
             }
+        } catch (Exception ignored) {
+            v.stopLoading();
+            return;
         }
         if (oauth.intercept(context, url)) {
-            Log.i(TAG, "onPageStarted stopped auth url=" + url);
+            Log.i(TAG, "onPageStarted stopped auth url="
+                    + SensitiveDataRedactor.safeUrl(url));
             v.stopLoading();
         }
     }
 
     @Override
     public void onReceivedSslError(WebView v, SslErrorHandler handler, SslError error) {
-        if (LoopbackSslPolicy.proceed(error)) {
-            handler.proceed();
-        } else {
-            handler.cancel();
-        }
+        Log.w(TAG, "rejecting TLS error in WebView: "
+                + SensitiveDataRedactor.safeUrl(error != null ? error.getUrl() : null));
+        // The embedded core certificate is trusted through network_security_config.
+        // Any remaining TLS error is unexpected and must fail closed.
+        handler.cancel();
     }
 
     @Override

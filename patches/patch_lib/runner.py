@@ -3,12 +3,16 @@
 Runs every patch group against a *staging* copy of the core (never the
 original), records before/after sha256 and writes ``runtime.manifest.json``.
 
-Groups (order matters for the manifest only; the byte ranges are disjoint):
+Active groups (order matters for the manifest; byte ranges are disjoint):
 
     eligibility  -> groups/gates
     seccomp      -> groups/syscalls
     resolv       -> groups/resolv
-    auth         -> groups/auth
+    sigill       -> groups/sigill
+    failfast     -> groups/failfast
+
+The experimental OAuth deep-link patch is intentionally not active: Android does
+not register that callback, so the official HTTPS success page is preserved.
 
 Flags:
     --verify          check the staged binary is fully patched; write nothing.
@@ -37,9 +41,6 @@ GROUP_MODULES = [
     ("resolv", "resolv"),
     ("sigill", "sigill"),
     ("failfast", "failfast"),
-    # The core's OAuth success URL is left intact so the browser shows the real
-    # "authentication successful" page, which then deep-links to the app. The
-    # app registers antigravity://oauth-success for that (see the manifest).
 ]
 
 # Make ``import patch_lib`` / ``groups`` work when this file is run as a script
@@ -111,7 +112,7 @@ def run_pipeline(target_path, verify=False, dry_run=False, allow_missing=False,
         "ok": all_ok,
     }
 
-    if write_manifest and not verify:
+    if write_manifest and not verify and not dry_run:
         if manifest_path is None:
             manifest_path = os.path.join(os.path.dirname(target_path),
                                          "runtime.manifest.json")

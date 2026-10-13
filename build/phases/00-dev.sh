@@ -15,12 +15,15 @@
 
 log "[0/9] configure build edition and generated sources"
 if [ "$DEV_MODE" -eq 1 ]; then
+    BUILD_EDITION=dev
     OUT_APK="$DIST_DIR/antigravity-dev.apk"
     log "  Configuring DEV edition: package=$PKG_DEV, label='$APP_NAME_DEV', port=$PORT_DEV"
 elif [ "${REGION_BYPASS:-0}" -eq 1 ]; then
+    BUILD_EDITION=release
     OUT_APK="$DIST_DIR/antigravity-bypass.apk"
     log "  Configuring RELEASE edition with REGION BYPASS: $OUT_APK"
 else
+    BUILD_EDITION=release
     OUT_APK="$DIST_DIR/antigravity.apk"
     log "  Configuring STANDARD RELEASE edition (without region bypass): $OUT_APK"
 fi
@@ -28,10 +31,16 @@ fi
 [ -d "$RES_DIR" ] || die "res dir not found: $RES_DIR"
 
 mkdir -p "$GEN_DIR" "$BUILD_DIR/res"
-python3 "$GEN_ANDROID_CONFIG" "$CONFIG_APP_ENV" "$GEN_DIR" \
+python3 "$GEN_ANDROID_CONFIG" "$CONFIG_APP_ENV" "$GEN_DIR" "$BUILD_EDITION" \
     || die "gen_android_config.py failed"
 [ -f "$GEN_DIR/com/agy/BuildConfig.java" ] || die "BuildConfig.java not generated"
 [ -f "$GEN_DIR/res/values/gen.xml" ]       || die "gen.xml not generated"
+python3 "$BUILD_TOOLS_DIR/prepare_manifest.py" \
+    "$MANIFEST_XML" "$BUILD_DIR/AndroidManifest.xml" \
+    "$PKG" "$PKG_DEV" "$MIN_API" "$TARGET_SDK" \
+    "$APP_VERSION_CODE" "$APP_VERSION_NAME" "$BUILD_EDITION" \
+    || die "prepare_manifest.py failed"
+TARGET_MANIFEST="$BUILD_DIR/AndroidManifest.xml"
 
 # $BUILD_DIR/res = copy of the app res tree plus the generated gen.xml.
 cp -a "$RES_DIR/." "$BUILD_DIR/res/"
@@ -47,15 +56,3 @@ if [ -f "$STRINGS_COPY" ]; then
 fi
 
 TARGET_RES="$BUILD_DIR/res"
-TARGET_MANIFEST="$MANIFEST_XML"
-
-if [ "$DEV_MODE" -eq 1 ]; then
-    GEN_XML="$BUILD_DIR/res/values/gen.xml"
-    sed -i "s|<string name=\"app_name\">.*</string>|<string name=\"app_name\">$APP_NAME_DEV</string>|" "$GEN_XML"
-    sed -i "s|<integer name=\"https_server_port\">.*</integer>|<integer name=\"https_server_port\">$PORT_DEV</integer>|" "$GEN_XML"
-
-    TARGET_MANIFEST="$BUILD_DIR/AndroidManifest.xml"
-    cp -f "$MANIFEST_XML" "$TARGET_MANIFEST"
-    sed -i "s|package=\"$PKG\"|package=\"$PKG_DEV\"|g" "$TARGET_MANIFEST"
-    sed -i "s|<application|<application android:debuggable=\"true\"|g" "$TARGET_MANIFEST"
-fi

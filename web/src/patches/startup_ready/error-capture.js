@@ -10,7 +10,7 @@ try {
     startupErrors.push(full);
     console.error(full);
     if (!state.signalled && global.Android && typeof global.Android.onUiError === 'function') {
-      global.Android.onUiError(full);
+      global.Android.onUiError(global.__AG_NATIVE_BRIDGE_TOKEN__, full);
     }
   });
   global.addEventListener('unhandledrejection', function (ev) {
@@ -19,7 +19,7 @@ try {
     startupErrors.push(full);
     console.error(full);
     if (!state.signalled && global.Android && typeof global.Android.onUiError === 'function') {
-      global.Android.onUiError(full);
+      global.Android.onUiError(global.__AG_NATIVE_BRIDGE_TOKEN__, full);
     }
   });
 } catch (e) {}

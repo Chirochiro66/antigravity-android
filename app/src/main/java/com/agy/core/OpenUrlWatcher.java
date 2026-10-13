@@ -11,6 +11,7 @@ import android.util.Log;
 
 import com.agy.oauth.OAuthManager;
 import com.agy.ui.MainActivity;
+import com.agy.util.SensitiveDataRedactor;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -38,7 +39,8 @@ public final class OpenUrlWatcher {
             if (intent == null) return;
             String url = intent.getStringExtra("url");
             if (url != null && !url.trim().isEmpty()) {
-                Log.i(TAG, "broadcast ACTION_OPEN_URL received: " + url);
+                Log.i(TAG, "broadcast ACTION_OPEN_URL received: "
+                        + SensitiveDataRedactor.safeUrl(url));
                 dispatchIfValid(url);
             }
         }
@@ -51,12 +53,17 @@ public final class OpenUrlWatcher {
     public void start() {
         try {
             IntentFilter filter = new IntentFilter("com.agy.ACTION_OPEN_URL");
+            // The /system/bin/am shim is launched by the app-owned core process.
+            // Keep delivery inside this signed app UID; external apps cannot spoof it.
+            String senderPermission = appContext.getPackageName()
+                    + ".permission.INTERNAL_BROADCAST";
             if (Build.VERSION.SDK_INT >= 33) {
-                appContext.registerReceiver(openUrlReceiver, filter, Context.RECEIVER_EXPORTED);
+                appContext.registerReceiver(openUrlReceiver, filter, senderPermission, null,
+                        Context.RECEIVER_NOT_EXPORTED);
             } else {
-                appContext.registerReceiver(openUrlReceiver, filter);
+                appContext.registerReceiver(openUrlReceiver, filter, senderPermission, null);
             }
-            Log.i(TAG, "registered ACTION_OPEN_URL receiver");
+            Log.i(TAG, "registered protected ACTION_OPEN_URL receiver");
         } catch (Throwable t) {
             Log.w(TAG, "failed to register ACTION_OPEN_URL receiver: " + t.getMessage());
         }
@@ -91,7 +98,8 @@ public final class OpenUrlWatcher {
                 if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
                     if (candidate.contains("accounts.google.com") || candidate.contains("oauth2")
                             || candidate.contains("auth")) {
-                        Log.i(TAG, "stream regex detected auth URL: " + candidate);
+                        Log.i(TAG, "stream regex detected auth URL: "
+                                + SensitiveDataRedactor.safeUrl(candidate));
                         dispatchIfValid(candidate);
                     }
                 }
@@ -110,7 +118,7 @@ public final class OpenUrlWatcher {
         }
         lastDispatchedUrl = url;
         lastDispatchedTime = now;
-        Log.i(TAG, "dispatching external URL: " + url);
+        Log.i(TAG, "dispatching external URL: " + SensitiveDataRedactor.safeUrl(url));
         openUrl(url);
     }
 
@@ -123,7 +131,8 @@ public final class OpenUrlWatcher {
                         : appContext;
                 boolean opened = oauth.openInBrowser(target, url);
                 if (!opened) {
-                    Log.w(TAG, "no browser accepted the url: " + url);
+                    Log.w(TAG, "no browser accepted the url: "
+                            + SensitiveDataRedactor.safeUrl(url));
                 }
             }
         });

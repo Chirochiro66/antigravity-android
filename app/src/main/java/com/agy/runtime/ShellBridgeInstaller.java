@@ -197,9 +197,8 @@ public final class ShellBridgeInstaller {
     }
 
     /**
-     * Writes the AGY URL opener shim. It prints "AGY_OPEN_URL=<url>" and
-     * "ANTIGRAVITY_OPEN_URL: <url>" for the core stdout reader and attempts direct
-     * broadcast/intent dispatch via /system/bin/am when available.
+     * Writes the AGY URL opener shim. It prints markers for the core stdout
+     * reader and sends one signature-protected internal broadcast as a shell-side fallback.
      */
     private static void writeOpenUrlShim(File bridge, android.content.Context context) {
         String pkg = (context != null) ? context.getPackageName() : "com.agy";
@@ -216,10 +215,6 @@ public final class ShellBridgeInstaller {
         sb.append("echo \"ANTIGRAVITY_OPEN_URL: $URL\"\n");
         sb.append("if [ -x /system/bin/am ]; then\n");
         sb.append("  /system/bin/am broadcast -a com.agy.ACTION_OPEN_URL -p ").append(pkg).append(" --es url \"$URL\" >/dev/null 2>&1 || true\n");
-        if (!"com.agy".equals(pkg)) {
-            sb.append("  /system/bin/am broadcast -a com.agy.ACTION_OPEN_URL -p com.agy --es url \"$URL\" >/dev/null 2>&1 || true\n");
-        }
-        sb.append("  /system/bin/am start -a android.intent.action.VIEW -d \"$URL\" >/dev/null 2>&1 || true\n");
         sb.append("fi\n");
         sb.append("exit 0\n");
         writeScript(bridge, sb.toString());

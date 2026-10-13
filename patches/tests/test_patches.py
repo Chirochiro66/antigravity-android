@@ -2,6 +2,7 @@
 """Tests for the restructured patch pipeline (stdlib unittest only)."""
 
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -28,12 +29,46 @@ class RunnerContractTest(unittest.TestCase):
             ("eligibility", "gates"),
             ("seccomp", "syscalls"),
             ("resolv", "resolv"),
+            ("sigill", "sigill"),
+            ("failfast", "failfast"),
         ])
+
+    def test_source_manifest_matches_active_runner(self):
+        manifest_path = os.path.join(PATCHES_DIR, "manifest.json")
+        with open(manifest_path, encoding="utf-8") as manifest_file:
+            source_manifest = json.load(manifest_file)
+        active_groups = [(group["id"], group["file"])
+                         for group in source_manifest["groups"]]
+        self.assertEqual(active_groups, runner.GROUP_MODULES)
+        self.assertNotIn("auth", [group["id"] for group in source_manifest["groups"]])
 
     def test_every_group_exposes_run(self):
         for _gid, name in runner.GROUP_MODULES:
             mod = loader.load_group(name)
             self.assertTrue(callable(mod.run), name)
+
+    def test_dry_run_does_not_modify_target_or_write_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = os.path.join(temp, "core")
+            manifest_path = os.path.join(temp, "runtime.manifest.json")
+            original = b"dry-run input"
+            with open(target, "wb") as core:
+                core.write(original)
+
+            active_groups = runner.GROUP_MODULES
+            runner.GROUP_MODULES = []
+            try:
+                result = runner.run_pipeline(
+                    target, dry_run=True, manifest_path=manifest_path,
+                    log=lambda _message: None,
+                )
+            finally:
+                runner.GROUP_MODULES = active_groups
+
+            self.assertEqual(result, 0)
+            with open(target, "rb") as core:
+                self.assertEqual(core.read(), original)
+            self.assertFalse(os.path.exists(manifest_path))
 
 
 class ModuleBaseTest(unittest.TestCase):

@@ -1,126 +1,94 @@
 # Build & Packaging Guide: Antigravity for Android
 
-This guide explains how to compile, patch, package, and verify **Antigravity for Android (AGY v2)** from source.
+The APK is assembled by `bash build.sh`; this repository does not use Gradle. A full APK build needs an Android build-tools installation, a Java JDK, the pinned Android/R8 jars, and the ARM64 runtime inputs under `core/` and `env/`.
 
----
+## Host requirements
 
-## 1. Prerequisites & Host Tools
+| Tool | Purpose |
+| --- | --- |
+| `aapt`, `zipalign`, `apksigner` | Android resources, APK alignment, signing and verification |
+| `javac`, `java` | Compile Java sources and run D8 from `tools/r8.jar` |
+| `python3` | Build configuration, patching, archive and asset checks |
+| `bash`, `zip`, `unzip`, `gzip`, `file`, `sha256sum`, `mktemp` | Packaging and integrity checks |
 
-The build system is entirely automated via `bash build.sh` and does not use Gradle. It requires standard Android SDK build tools, a Java JDK, and basic Linux utilities.
+`tools/android.jar` and `tools/r8.jar` are verified against the SHA-256 values in `config/paths.env`. Update those pins only when intentionally replacing the corresponding build tool.
 
-### Required Software
-| Tool | Expected Binary | Purpose |
-|---|---|---|
-| **Android Asset Packaging Tool** | `aapt` (or `aapt2`) | Packaging resources, generating `R.java`, building base APK |
-| **Java Compiler** | `javac` (JDK 8, 11, or 17) | Compiling Android Java sources |
-| **Android D8 Dexer** | `java` + `r8.jar` | Dexing `.class` bytecode into `classes.dex` |
-| **Zip Alignment Tool** | `zipalign` | 4-byte boundary alignment for Android APKs |
-| **APK Signer** | `apksigner` | V2/V3 APK signature generation and verification |
-| **Python** | `python3` (3.8+) | Binary patch pipeline and configuration generation |
-| **Utilities** | `bash`, `zip`, `unzip`, `gzip`, `file`, `sha256sum`, `mktemp` | Archive handling and integrity verification |
+## Build inputs
 
-### Required Vendor Inputs (`config/paths.env`)
-Before building, ensure external immutable inputs are present in your vendor directory:
-```bash
-CORE_BIN=$AGY_HOME/core/language_server       # Pristine AArch64 language_server ELF
-GLIBC_DIR=$AGY_HOME/core/glibc               # ARM64 glibc libraries (ld-linux, libc, libm...)
-CERTS_DIR=$AGY_HOME/core/certs               # CA certificates
-SEED_DIR=$AGY_HOME/core/seed                 # Pre-configured onboarding state pbtxt files
-ANDROID_JAR=$AGY_HOME/tools/android.jar      # Android SDK android.jar (API 28+)
-R8_JAR=$AGY_HOME/tools/r8.jar                # D8 dex compiler jar
-KEYSTORE=$AGY_HOME/tools/debug.keystore      # Signing keystore
-```
+By default, `config/paths.env` resolves vendor inputs from this checkout:
 
----
+- `core/language_server.tar.gz` (or an unpacked `core/language_server`)
+- `core/glibc/`, `core/certs/`, `core/seed/`, and `core/tools/`
+- `env/pkg/`, `env/overlay/`, and `env/bootstrap/bootstrap.tar.gz`
+- `tools/android.jar` and `tools/r8.jar`
 
-## 2. Build Modes & Commands
+Set `AGY_HOME` or individual path variables from `config/paths.env` to use an external immutable vendor tree. Keep release secrets outside the checkout.
 
-All builds are driven through `build.sh`:
+## Signing identities
+
+- `bash build.sh --dev` uses the development identity at `tools/debug.keystore` (or `AGY_DEV_KEYSTORE`). If missing, the build creates a local dev key. Dev builds are not production releases.
+- Release builds **never fall back** to the debug keystore. They require `AGY_RELEASE_KEYSTORE`, `AGY_RELEASE_KEY_ALIAS`, `AGY_RELEASE_STORE_PASS`, and `AGY_RELEASE_KEY_PASS`.
+- CI additionally requires the protected `AGY_RELEASE_CERT_SHA256` secret and compares it to the certificate exported from the configured release keystore. Set it to the SHA-256 fingerprint of the signing certificate used by the existing published APKs, verified independently with `apksigner verify --print-certs <apk>`.
+
+The repository contains a tracked debug keystore and the historical release workflow used repository signing inputs. A newly generated release key can make an APK impossible to install as an update over an existing release. Do not configure a new signing identity or publish until the certificate fingerprint and any required Android signing-key migration have been checked against the currently distributed APKs. The public debug keystore must not be used as a release-key fallback.
+
+## Build modes
 
 ```bash
-# 1. Standard Release (com.agy, Port 45157 -> dist/antigravity.apk)
+# Production standard and region-bypass builds (release signing secrets required)
 bash build.sh
-
-# 2. Release with Region Bypass (dist/antigravity-bypass.apk)
 bash build.sh --region-bypass
 
-# 3. Developer Edition (com.agy.dev, Port 45158 -> dist/antigravity-dev.apk)
+# Isolated development package (com.agy.dev)
 bash build.sh --dev
 
-# 4. Dry-Run Mode (Runs binary patching and verification only, skips packaging)
+# Debug-only vanilla core (must be combined with --dev)
+bash build.sh --dev --no-patch
+
+# Patch dry run; does not produce an APK
 bash build.sh --dry-run
-
-# 5. Debug / Vanilla Core (Skips patch_runner, packages unpatched core)
-bash build.sh --no-patch
 ```
 
----
+The app version and Android package versions are configured in `config/app.env`. A published release tag must be `v<APP_VERSION_NAME>`; CI validates this before building or publishing.
 
-## 3. Build Pipeline Phases (`build/phases/`)
+## Verification
 
-The build orchestrator executes the following phases in strictly sequential order:
+Run the offline suites without Android SDK tools:
 
-```mermaid
-flowchart TD
-    P0["00-dev.sh: App config & resource generation"] --> P1["01-stage-core.sh: Staging core binary"]
-    P1 --> P2["02-patch.sh: patch_runner.py & verify"]
-    P2 --> P3["03-glibc-libs.sh: glibc library aggregation"]
-    P3 --> P4["04-runtime.sh: Staging assets/runtime/"]
-    P4 --> P4b["04b-ldcheck.sh: ld-linux dependency validation"]
-    P4b --> P4c["04c-rt-manifest.sh: SHA-256 runtime manifest"]
-    P4c --> P5["05-web-bus.sh: Web bundle & bus staging"]
-    P5 --> P5b["05b-env.sh: Bionic toolchain packaging"]
-    P5b --> P6["06-rjava.sh: aapt R.java generation"]
-    P6 --> P7["07-javac.sh: Java compilation"]
-    P7 --> P7b["07b-d8.sh: D8 dexing to classes.dex"]
-    P7b --> P8["08-package.sh: aapt package & asset packaging"]
-    P8 --> P9["09-sign.sh: zipalign & apksigner"]
-    P9 --> P9b["09b-verify.sh: apksigner verify & asset audit"]
-```
-
-### Key Phase Highlights
-- **`00-dev.sh`**: Runs `build/tools/gen_android_config.py` on `config/app.env`, emitting `build/gen/com/agy/BuildConfig.java` and `build/gen/res/values/gen.xml`.
-- **`04b-ldcheck.sh`**: Runs a test execution of the dynamic linker (`ld-linux-aarch64.so.1 --list liblanguage_server.so`). If any shared library dependency (`NEEDED`) is missing, the build terminates fail-closed.
-- **`04c-rt-manifest.sh`**: Calculates SHA-256 hashes for all staged runtime files and saves `assets/runtime/manifest.json`.
-- **`08-package.sh`**: Handles an `aapt` quirk where `.tar.gz` files are prematurely decompressed; packages `bootstrap.tar.gz` safely into the APK via `zip -u`.
-- **`09b-verify.sh`**: Runs cryptographic signature verification (`apksigner verify`) and audits the integrity of `bootstrap.tar.gz`.
-
----
-
-## 4. Verification & Testing
-
-To test and verify individual components without triggering a full APK build:
-
-### Test Binary Patches
 ```bash
-# In-memory unittests
-python3 -m unittest discover -s patches/tests
-
-# Dry-run patch verification against staged core
-python3 patches/patch_runner.py build/staging/language_server --verify
+python3 -m unittest discover -s patches/tests -v
+python3 -m unittest discover -s build/tests -v
+bash build/tests/selftest.sh
+bash bus/selftest
+bash env/tests/selftest
+bash web/tests/selftest.sh
 ```
 
-### Test Shell Bus
+Check environment asset staging in a disposable directory:
+
 ```bash
-# Run the offline bus acceptance test (12/12 checks)
-bus/bus.sh selftest
+tmp="$(mktemp -d)"
+ASSETS="$tmp/env" bash env/build.sh all
+ASSETS="$tmp/env" bash env/tests/invariant
+rm -rf "$tmp"
 ```
 
-### Test Web Bundles
-```bash
-# Concatenate and validate JS bundles
-bash web/build.sh
-```
+`bash web/build.sh` regenerates ignored files under `web/generated/`; it patches a generated copy of `web/main.js`, leaving the upstream source unchanged. The APK build independently checks that staged web assets match the generated tree.
 
----
+## Pipeline
 
-## 5. Troubleshooting Common Issues
+The orchestrator runs `build/phases/*.sh` in lexical order:
 
-### Issue: `aapt: command not found`
-Install the Android SDK Build-Tools or link `aapt`, `zipalign`, and `apksigner` into your `$PATH`.
+1. Generate build constants and an edition-specific Android manifest.
+2. Stage and patch the core binary, then verify the patch states.
+3. Assemble glibc/runtime assets and generate the runtime SHA-256 manifest.
+4. Build and stage web, bus and Bionic environment assets.
+5. Generate `R.java`, compile Java, run D8, package, align and sign the APK.
+6. Verify the APK signature and packaged bootstrap archive.
 
-### Issue: `bootstrap.tar.gz is not gzip despite .tar.gz name`
-Ensure your bootstrap archive is a valid gzip archive (`file bootstrap.tar.gz` must report `gzip compressed data`).
+## Troubleshooting
 
-### Issue: `runtime integrity check failed on device`
-If runtime files fail verification on the first boot of the Android app, verify that flash storage is not corrupt and that `manifest.json` matches the actual asset hashes.
+- **`aapt`/`zipalign`/`apksigner` not found:** Install Android SDK Build Tools and add the binaries to `PATH`.
+- **`android.jar` or `r8.jar` SHA-256 mismatch:** Restore the pinned file or review and intentionally update its configured checksum.
+- **Release signing fails:** Confirm all four `AGY_RELEASE_*` inputs are set and that the keystore alias and passwords are correct. CI also checks `AGY_RELEASE_CERT_SHA256`.
+- **Runtime integrity check fails on device:** Check storage errors and confirm the packaged runtime manifest matches the staged files.

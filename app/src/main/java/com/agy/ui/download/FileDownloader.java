@@ -18,7 +18,15 @@ import android.webkit.URLUtil;
 import android.webkit.WebView;
 import android.widget.Toast;
 
+import com.agy.runtime.RuntimeConfig;
+import com.agy.util.PathSafety;
+import com.agy.util.SensitiveDataRedactor;
+import com.agy.util.TrustedCoreOrigin;
+
+import org.json.JSONObject;
+
 import java.io.File;
+import java.io.IOException;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,6 +39,7 @@ import java.net.URL;
 public final class FileDownloader {
 
     private static final String TAG = "FileDownloader";
+    private static final int MAX_BLOB_BYTES = 64 * 1024 * 1024;
     public static final int REQUEST_STORAGE_DOWNLOAD = 2001;
 
     public static class DownloadTask {
@@ -144,10 +153,18 @@ public final class FileDownloader {
             return;
         }
 
-        // Case 3: Loopback (127.0.0.1 / localhost) -> direct internal download to avoid DownloadManager TLS errors
+        // Case 3: exact HTTPS core origin -> direct download to avoid DownloadManager
+        // TLS errors. Other loopback ports are not treated as trusted core endpoints.
         Uri uri = Uri.parse(rawUrl);
-        String host = uri.getHost();
-        if (com.agy.util.LoopbackHost.isLoopback(host)) {
+        String scheme = uri.getScheme();
+        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                || uri.getHost() == null || uri.getHost().isEmpty()
+                || uri.getUserInfo() != null) {
+            Log.w(TAG, "refusing non-web or credential-bearing download URL");
+            Toast.makeText(activity, "Недопустимый адрес загрузки", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (TrustedCoreOrigin.matches(uri, RuntimeConfig.httpsPort(activity))) {
             downloadDirect(activity, rawUrl, task.contentDisposition, task.mimeType);
             return;
         }
@@ -158,7 +175,11 @@ public final class FileDownloader {
             if (task.mimeType != null && !task.mimeType.isEmpty()) {
                 request.setMimeType(task.mimeType);
             }
-            String fileName = URLUtil.guessFileName(rawUrl, task.contentDisposition, task.mimeType);
+            String fileName = safeFileName(
+                    URLUtil.guessFileName(rawUrl, task.contentDisposition, task.mimeType));
+            if (fileName.isEmpty()) {
+                fileName = "download_" + System.currentTimeMillis();
+            }
             request.setTitle(fileName);
             request.setDescription("Скачивание файла");
             request.allowScanningByMediaScanner();
@@ -177,7 +198,8 @@ public final class FileDownloader {
             if (dm != null) {
                 dm.enqueue(request);
                 Toast.makeText(activity, "Скачивание: " + fileName, Toast.LENGTH_SHORT).show();
-                Log.i(TAG, "Download enqueued: " + fileName + " url=" + rawUrl);
+                Log.i(TAG, "Download enqueued: " + fileName + " url="
+                        + SensitiveDataRedactor.safeUrl(rawUrl));
             }
         } catch (Exception e) {
             Log.w(TAG, "DownloadManager failed, falling back to direct download: " + e.getMessage());
@@ -186,17 +208,17 @@ public final class FileDownloader {
     }
 
     private static void extractBlobViaJs(WebView webView, String blobUrl, String filename, String mimeType) {
-        String js = "(function() {" +
+        String js = "(function(blobUrl, filename, mimeType) {" +
                 "  try {" +
                 "    var xhr = new XMLHttpRequest();" +
-                "    xhr.open('GET', '" + blobUrl + "', true);" +
+                "    xhr.open('GET', blobUrl, true);" +
                 "    xhr.responseType = 'blob';" +
                 "    xhr.onload = function() {" +
                 "      if (xhr.status === 200 || xhr.status === 0) {" +
                 "        var reader = new FileReader();" +
                 "        reader.onloadend = function() {" +
-                "          if (window.Android && window.Android.saveBlob) {" +
-                "            window.Android.saveBlob(reader.result, '" + filename + "', '" + (mimeType != null ? mimeType : "") + "');" +
+                "          if (window.Android && window.Android.saveBlob && window.__AG_NATIVE_BRIDGE_TOKEN__) {" +
+                "            window.Android.saveBlob(window.__AG_NATIVE_BRIDGE_TOKEN__, reader.result, filename, mimeType);" +
                 "          }" +
                 "        };" +
                 "        reader.readAsDataURL(xhr.response);" +
@@ -206,7 +228,9 @@ public final class FileDownloader {
                 "  } catch(e) {" +
                 "    console.error('Failed to extract blob', e);" +
                 "  }" +
-                "})();";
+                "})(" + JSONObject.quote(blobUrl == null ? "" : blobUrl) + ","
+                + JSONObject.quote(filename == null ? "" : filename) + ","
+                + JSONObject.quote(mimeType == null ? "" : mimeType) + ");";
         webView.evaluateJavascript(js, null);
     }
 
@@ -221,17 +245,22 @@ public final class FileDownloader {
                     if (comma >= 0) {
                         base64 = base64.substring(comma + 1);
                     }
+                    long estimatedBytes = ((long) base64.length() * 3L) / 4L;
+                    if (estimatedBytes > MAX_BLOB_BYTES) {
+                        throw new IOException("blob exceeds the 64 MiB download limit");
+                    }
                     byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
 
                     File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                    if (!downloadsDir.exists()) {
-                        downloadsDir.mkdirs();
+                    if (!downloadsDir.exists() && !downloadsDir.mkdirs() && !downloadsDir.isDirectory()) {
+                        throw new IOException("cannot create Downloads directory");
                     }
 
-                    String name = (filename != null && !filename.trim().isEmpty())
-                            ? filename.trim() : ("download_" + System.currentTimeMillis());
-                    File target = new File(downloadsDir, name);
-                    target = getUniqueFile(target);
+                    String name = safeFileName(filename);
+                    if (name.isEmpty()) {
+                        name = "download_" + System.currentTimeMillis();
+                    }
+                    File target = getSafeUniqueFile(downloadsDir, name);
 
                     try (FileOutputStream fos = new FileOutputStream(target)) {
                         fos.write(bytes);
@@ -287,14 +316,16 @@ public final class FileDownloader {
                         type = mimeType;
                     }
 
-                    String fileName = URLUtil.guessFileName(fileUrl, disp, type);
+                    String fileName = safeFileName(URLUtil.guessFileName(fileUrl, disp, type));
+                    if (fileName.isEmpty()) {
+                        fileName = "download_" + System.currentTimeMillis();
+                    }
                     File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-                    if (!downloadsDir.exists()) {
-                        downloadsDir.mkdirs();
+                    if (!downloadsDir.exists() && !downloadsDir.mkdirs() && !downloadsDir.isDirectory()) {
+                        throw new IOException("cannot create Downloads directory");
                     }
 
-                    File target = new File(downloadsDir, fileName);
-                    target = getUniqueFile(target);
+                    File target = getSafeUniqueFile(downloadsDir, fileName);
 
                     try (InputStream in = conn.getInputStream();
                          OutputStream out = new FileOutputStream(target)) {
@@ -327,6 +358,45 @@ public final class FileDownloader {
                 }
             }
         }).start();
+    }
+
+    private static String safeFileName(String filename) {
+        if (filename == null) {
+            return "";
+        }
+        String name = filename.trim().replace('\\', '/');
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        StringBuilder clean = new StringBuilder(Math.min(name.length(), 180));
+        for (int i = 0; i < name.length() && clean.length() < 180; i++) {
+            char ch = name.charAt(i);
+            if (ch < 0x20 || ch == 0x7f) {
+                clean.append('_');
+            } else if (ch != '/' && ch != '\\') {
+                clean.append(ch);
+            }
+        }
+        name = clean.toString().trim();
+        return ".".equals(name) || "..".equals(name) ? "" : name;
+    }
+
+    private static File getSafeUniqueFile(File downloadsDir, String requestedName) throws IOException {
+        File root = downloadsDir.getCanonicalFile();
+        String name = safeFileName(requestedName);
+        if (name.isEmpty()) {
+            throw new IOException("invalid download filename");
+        }
+        File target = new File(root, name).getCanonicalFile();
+        if (target.equals(root) || !PathSafety.isInside(root, target)) {
+            throw new IOException("download path escaped Downloads directory");
+        }
+        File unique = getUniqueFile(target);
+        if (unique.equals(root) || !PathSafety.isInside(root, unique)) {
+            throw new IOException("download path escaped Downloads directory");
+        }
+        return unique;
     }
 
     private static File getUniqueFile(File file) {

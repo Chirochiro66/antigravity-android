@@ -9,7 +9,11 @@ public final class RuntimeConfig {
 
     public static final int DEFAULT_HTTPS_PORT = BuildConfig.PORT;
     public static final String CORE_VERSION = BuildConfig.CORE_VERSION;
+    public static final String APP_VERSION_NAME = BuildConfig.APP_VERSION_NAME;
+    public static final int APP_VERSION_CODE = BuildConfig.APP_VERSION_CODE;
     public static final int MIN_API = BuildConfig.MIN_API;
+    public static final int TARGET_SDK = BuildConfig.TARGET_SDK;
+    public static final boolean DEBUG = BuildConfig.DEBUG;
 
     private RuntimeConfig() {
     }

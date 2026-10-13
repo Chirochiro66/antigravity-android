@@ -8,6 +8,8 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 
+import com.agy.util.SensitiveDataRedactor;
+
 /** Routes console output to logcat, popups to PopupWindowHandler, and file chooser to callback. */
 public final class AgyWebChromeClient extends WebChromeClient {
 
@@ -33,8 +35,8 @@ public final class AgyWebChromeClient extends WebChromeClient {
     @Override
     public boolean onConsoleMessage(ConsoleMessage cm) {
         if (cm != null) {
-            String msg = cm.message();
-            String src = cm.sourceId();
+            String msg = SensitiveDataRedactor.redactLine(cm.message());
+            String src = SensitiveDataRedactor.safeUrl(cm.sourceId());
             int line = cm.lineNumber();
             ConsoleMessage.MessageLevel lvl = cm.messageLevel();
             String tag = "AGY_JS";

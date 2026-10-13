@@ -43,6 +43,24 @@ parse_args "$@"
 . "$PROJECT/build/lib/paths.sh"
 setup_paths
 
+# A dry run validates the patch pipeline only. It must not require Android
+# build tools or any signing material, and it stops immediately after the
+# patcher's read-only dry-run phase.
+if [ "$DRY_RUN" -eq 1 ]; then
+    command -v python3 >/dev/null 2>&1 || die "missing host tool: python3"
+    [ -f "$CORE_SRC" ] || [ -f "${CORE_SRC}.tar.gz" ] \
+        || die "core not found: $CORE_SRC (or ${CORE_SRC}.tar.gz)"
+    [ -f "$PATCHES_DIR/patch_runner.py" ] \
+        || die "patch runner not found: $PATCHES_DIR/patch_runner.py"
+    mkdir -p "$(dirname "$STAGED_CORE")"
+    . "$PROJECT/build/phases/01-stage-core.sh"
+    . "$PROJECT/build/phases/02-patch.sh"
+    die "dry-run unexpectedly passed through the patch phase"
+fi
+
+. "$PROJECT/build/lib/signing.sh"
+configure_signing
+
 . "$PROJECT/build/lib/prereqs.sh"
 check_tools
 
