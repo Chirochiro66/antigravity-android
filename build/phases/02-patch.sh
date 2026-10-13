@@ -7,7 +7,7 @@
 
 log "[2/9] patch pipeline (fail-closed)"
 PATCH_EXTRA_FLAGS=()
-if [ "${REGION_BYPASS:-0}" -eq 1 ]; then
+if [ "$DEV_MODE" -eq 1 ] || [ "${REGION_BYPASS:-0}" -eq 1 ]; then
     log "  region bypass enabled (applying eligibility & auth gates patch)"
 else
     log "  standard release: region gates bypass disabled"
