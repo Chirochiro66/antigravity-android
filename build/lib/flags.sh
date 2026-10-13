@@ -19,5 +19,13 @@ parse_args() {
             *) echo "unknown flag: $arg" >&2; exit 2 ;;
         esac
     done
+    if [ "$NO_PATCH" -eq 1 ] && [ "$DEV_MODE" -ne 1 ]; then
+        echo "--no-patch is allowed only with --dev" >&2
+        exit 2
+    fi
+    if [ "$NO_PATCH" -eq 1 ] && [ "$DRY_RUN" -eq 1 ]; then
+        echo "--no-patch cannot be combined with --dry-run" >&2
+        exit 2
+    fi
     export NO_PATCH DRY_RUN DEV_MODE REGION_BYPASS
 }

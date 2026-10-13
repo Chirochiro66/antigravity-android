@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.agy.util.SensitiveDataRedactor;
+
 import java.io.File;
 
 /**
@@ -36,11 +38,13 @@ public final class OAuthManager {
      */
     public boolean intercept(Context context, String url) {
         boolean auth = matcher.isAuthUrl(url);
-        Log.i(OAuthConstants.TAG, "intercept isAuthUrl=" + auth + " url=" + url);
+        Log.i(OAuthConstants.TAG, "intercept isAuthUrl=" + auth + " url="
+                + SensitiveDataRedactor.safeUrl(url));
         if (!auth) {
             return false;
         }
-        Log.i(OAuthConstants.TAG, "isAuthUrl matched -> external browser: " + url);
+        Log.i(OAuthConstants.TAG, "isAuthUrl matched -> external browser: "
+                + SensitiveDataRedactor.safeUrl(url));
         return launcher.openInBrowser(context, url);
     }
 

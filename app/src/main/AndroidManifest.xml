@@ -41,6 +41,10 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <permission
+        android:name="com.agy.permission.INTERNAL_BROADCAST"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.agy.permission.INTERNAL_BROADCAST" />
 
     <application
         android:allowBackup="false"
@@ -67,7 +71,7 @@
         -->
         <activity
             android:name="com.agy.ui.MainActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/SplashTheme"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode|density"
@@ -113,7 +117,7 @@
 
         <receiver
             android:name="com.agy.runtime.TorchReceiver"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="com.agy.ACTION_TORCH" />
             </intent-filter>

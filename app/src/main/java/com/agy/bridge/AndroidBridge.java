@@ -3,16 +3,19 @@ package com.agy.bridge;
 import android.content.Context;
 import android.webkit.JavascriptInterface;
 
-import com.agy.oauth.OAuthManager;
 import com.agy.runtime.RuntimeManager;
 import com.agy.shell.ShizukuBridge;
 import com.agy.theme.ThemeManager;
 import com.agy.ui.MainActivity;
 
+import java.nio.charset.Charset;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+
 /**
- * The single JS bridge exposed to the WebView as the `Android` object
- * (aliased to `AndroidBridge` by the injected boot script). All methods are
- * fail-soft: they never throw into JS and return JSON / plain strings.
+ * Minimal, low-privilege JavaScript bridge for the app UI. It is visible to
+ * embedded frames, so shell, notification, and arbitrary URL capabilities must
+ * not be exposed here. Native-only getters below are intentionally unannotated.
  */
 public final class AndroidBridge {
 
@@ -20,20 +23,14 @@ public final class AndroidBridge {
     private final ThemeBridge themeBridge;
     private final EngineBridge engine;
     private final EngineConfigJson config;
-    private final ExternalUrlBridge external;
-    private final ShellBridge shell;
-    private final NotificationBridge notification;
+    private final String blobBridgeToken = createBlobBridgeToken();
 
     public AndroidBridge(Context context, RuntimeManager runtime,
-                         ShizukuBridge shizuku, OAuthManager oauth,
-                         ThemeManager theme) {
+                         ShizukuBridge shizuku, ThemeManager theme) {
         Context appContext = context.getApplicationContext();
         this.themeBridge = new ThemeBridge(theme);
         this.engine = new EngineBridge(runtime);
         this.config = new EngineConfigJson(appContext, runtime, engine, shizuku, themeBridge);
-        this.external = new ExternalUrlBridge(appContext, oauth);
-        this.shell = new ShellBridge(shizuku);
-        this.notification = new NotificationBridge(appContext, shizuku);
     }
 
     /** Host activity, used to dismiss the native splash once the UI has painted. */
@@ -41,17 +38,18 @@ public final class AndroidBridge {
         ui.setActivity(activity);
     }
 
-    /**
-     * Called from web/patches/startup_ready.js after the UI's first paint.
-     */
     @JavascriptInterface
-    public void onUiReady() {
-        ui.onUiReady();
+    public void onUiReady(String token) {
+        if (matchesNativeBridgeToken(token)) {
+            ui.onUiReady();
+        }
     }
 
     @JavascriptInterface
-    public void onUiError(final String errorMessage) {
-        ui.onUiError(errorMessage);
+    public void onUiError(String token, final String errorMessage) {
+        if (matchesNativeBridgeToken(token)) {
+            ui.onUiError(errorMessage);
+        }
     }
 
     @JavascriptInterface
@@ -84,66 +82,67 @@ public final class AndroidBridge {
         ui.setDesktopMode(enabled);
     }
 
-    @JavascriptInterface
+    // Native-only helpers used while preparing the trusted app document.
     public boolean isEngineReady() {
         return engine.isReady();
     }
 
-    @JavascriptInterface
     public int getEnginePort() {
         return engine.getPort();
     }
 
-    @JavascriptInterface
     public String getEngineBaseUrl() {
         return engine.getBaseUrl();
     }
 
-    @JavascriptInterface
     public String getCsrfToken() {
         return engine.getCsrfToken();
     }
 
-    @JavascriptInterface
     public String getConfig() {
         return config.get();
     }
 
-    @JavascriptInterface
-    public void openUrl(String url) {
-        external.open(url);
+    /** Native-only token inserted into the trusted top-level document. */
+    public String getBlobBridgeToken() {
+        return blobBridgeToken;
     }
 
+    /** Saves a downloaded blob only for scripts holding the top-level document token. */
     @JavascriptInterface
-    public String exec(String cmd) {
-        return shell.exec(cmd);
-    }
-
-    @JavascriptInterface
-    public String shizuku(String cmd) {
-        return shell.exec(cmd);
-    }
-
-    @JavascriptInterface
-    public boolean shizukuAvailable() {
-        return shell.available();
-    }
-
-    @JavascriptInterface
-    public boolean postNotification(String title, String message, String tag) {
-        return notification.post(title, message, tag);
-    }
-
-    @JavascriptInterface
-    public String listNotifications() {
-        return notification.list();
-    }
-
-    @JavascriptInterface
-    public void saveBlob(String base64Data, String filename, String mimeType) {
+    public void saveBlob(String token, String base64Data, String filename, String mimeType) {
+        if (!matchesNativeBridgeToken(token)) {
+            return;
+        }
         if (MainActivity.activeActivity != null) {
             com.agy.ui.download.FileDownloader.handleBlobData(
                     MainActivity.activeActivity, base64Data, filename, mimeType);
         }
+    }
+
+    private boolean matchesNativeBridgeToken(String candidate) {
+        if (candidate == null) {
+            return false;
+        }
+        try {
+            byte[] expected = blobBridgeToken.getBytes(Charset.forName("UTF-8"));
+            byte[] actual = candidate.getBytes(Charset.forName("UTF-8"));
+            return MessageDigest.isEqual(expected, actual);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static String createBlobBridgeToken() {
+        byte[] random = new byte[32];
+        new SecureRandom().nextBytes(random);
+        char[] hex = "0123456789abcdef".toCharArray();
+        char[] encoded = new char[random.length * 2];
+        for (int i = 0; i < random.length; i++) {
+            int value = random[i] & 0xff;
+            encoded[i * 2] = hex[value >>> 4];
+            encoded[i * 2 + 1] = hex[value & 0x0f];
+        }
+        return new String(encoded);
     }
 }

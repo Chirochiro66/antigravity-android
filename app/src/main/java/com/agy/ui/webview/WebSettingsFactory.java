@@ -41,17 +41,18 @@ public final class WebSettingsFactory {
         boolean desktop = DesktopModePrefs.isDesktopMode(view.getContext());
         applyDesktopMode(view, desktop);
 
-        // File + content access are needed for local assets requested by our UI.
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
-        settings.setAllowFileAccessFromFileURLs(true);
-        settings.setAllowUniversalAccessFromFileURLs(true);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        // The app document uses its pinned HTTPS loopback origin; file:// access
+        // and HTTP mixed content are not needed and expand the bridge attack surface.
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(true); // Needed for content:// file-picker results.
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            settings.setSafeBrowsingEnabled(false);
+            settings.setSafeBrowsingEnabled(true);
         }
         // Offscreen preraster: keeps tiles GPU-ready off the main thread (API 23+).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

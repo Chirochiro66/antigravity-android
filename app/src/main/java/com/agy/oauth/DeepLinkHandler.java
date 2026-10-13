@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.net.Uri;
 import android.util.Log;
 
+import com.agy.util.SensitiveDataRedactor;
+
 /**
  * Handles the antigravity://auth-success deep link delivered to MainActivity.
  * Returns true when the intent was the auth callback.
@@ -41,7 +43,8 @@ public final class DeepLinkHandler {
         if (!expectedScheme.equalsIgnoreCase(data.getScheme()) || !hostOk) {
             return false;
         }
-        Log.i(OAuthConstants.TAG, "auth-success deep link received: " + data
+        Log.i(OAuthConstants.TAG, "auth-success deep link received: "
+                + SensitiveDataRedactor.safeUrl(data.toString())
                 + " tokenPresent=" + OAuthTokenStore.hasToken(activity));
         if (onSuccess != null) {
             onSuccess.run();

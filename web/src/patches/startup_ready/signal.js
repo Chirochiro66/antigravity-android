@@ -18,7 +18,7 @@ function signal(reason) {
   try {
     console.log('[AGY Startup] UI Ready triggered via: ' + (reason || 'unknown'));
     if (global.Android && typeof global.Android.onUiReady === 'function') {
-      global.Android.onUiReady();
+      global.Android.onUiReady(global.__AG_NATIVE_BRIDGE_TOKEN__);
     }
   } catch (e) {
     console.warn('[AGY Startup] Android.onUiReady error:', e);

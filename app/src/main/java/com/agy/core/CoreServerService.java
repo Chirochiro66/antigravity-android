@@ -2,7 +2,9 @@ package com.agy.core;
 
 import android.app.Service;
 import android.content.Intent;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 
 import com.agy.runtime.RuntimeManager;
@@ -20,6 +22,8 @@ public final class CoreServerService extends Service {
     private WakeLockHolder wakeLock;
     private OpenUrlWatcher openUrlWatcher;
     private CoreProcessSupervisor supervisor;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private volatile boolean destroyed;
 
     @Override
     public void onCreate() {
@@ -45,12 +49,42 @@ public final class CoreServerService extends Service {
         openUrlWatcher = new OpenUrlWatcher(this);
         openUrlWatcher.start();
 
-        supervisor = new CoreProcessSupervisor(this, runtime, openUrlWatcher);
+        supervisor = new CoreProcessSupervisor(this, runtime, openUrlWatcher,
+                this::onSupervisorTerminated);
         supervisor.start();
+    }
+
+    private void onSupervisorTerminated() {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (destroyed) {
+                    return;
+                }
+                CoreRuntimeState.serverUrl = null;
+                CoreRuntimeState.restarting = false;
+                if (CoreRuntimeState.lastError == null) {
+                    CoreRuntimeState.lastError = "core supervisor stopped unexpectedly";
+                }
+                if (wakeLock != null) {
+                    wakeLock.release();
+                }
+                if (runtime != null) {
+                    runtime.stopNetworkMonitor();
+                }
+                if (openUrlWatcher != null) {
+                    openUrlWatcher.stop();
+                }
+                ForegroundNotification.update(CoreServerService.this,
+                        "Core stopped — open app to retry");
+            }
+        });
     }
 
     @Override
     public void onDestroy() {
+        destroyed = true;
+        mainHandler.removeCallbacksAndMessages(null);
         // Intentional stop: the watchdog must not treat the exit as a crash.
         if (supervisor != null) {
             supervisor.stop();
@@ -60,6 +94,9 @@ public final class CoreServerService extends Service {
         }
         if (wakeLock != null) {
             wakeLock.release();
+        }
+        if (runtime != null) {
+            runtime.stopNetworkMonitor();
         }
         CoreRuntimeState.serverUrl = null;
         CoreRuntimeState.lastError = null;

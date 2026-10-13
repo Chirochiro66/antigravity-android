@@ -2,6 +2,8 @@ package com.agy.core;
 
 import android.util.Log;
 
+import com.agy.util.SensitiveDataRedactor;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
@@ -33,7 +35,7 @@ public final class CoreLogWriter {
             return;
         }
         try {
-            log.write(line);
+            log.write(SensitiveDataRedactor.redactLine(line));
             log.write('\n');
             log.flush();
         } catch (Exception ignored) {

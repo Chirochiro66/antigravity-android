@@ -18,9 +18,14 @@ if [ -d "$BUS_DIR" ]; then
 else
     log "  bus/ absent, skipped"
 fi
-# byte-for-byte invariant: assets/web == web/ (build-only files excluded)
-if ! diff -r --exclude=src --exclude=build.sh --exclude=patch_main.py --exclude=src.manifest \
+# The upstream main.js is build input only; the APK contains its patched copy
+# at generated/main.js. Verify all other staged files and that generated copy.
+rm -f "$STAGE_ASSETS/web/main.js"
+if ! diff -r --exclude=src --exclude=build.sh --exclude=patch_main.py \
+        --exclude=src.manifest --exclude=main.js \
         "$WEB_DIR" "$STAGE_ASSETS/web" >/dev/null 2>&1; then
-    die "invariant failed: assets/web != web/ (excluding build-only files)"
+    die "invariant failed: staged web assets differ from generated source tree"
 fi
-log "  invariant ok: assets/web == web/ (build-only files pruned)"
+cmp -s "$WEB_DIR/generated/main.js" "$STAGE_ASSETS/web/generated/main.js" \
+    || die "invariant failed: generated main.js differs in staged assets"
+log "  invariant ok: staged web assets match generated source tree"

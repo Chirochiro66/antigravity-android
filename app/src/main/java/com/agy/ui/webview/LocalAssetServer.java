@@ -7,6 +7,7 @@ import android.webkit.WebResourceResponse;
 
 import com.agy.util.MimeTypes;
 import com.agy.util.PathSafety;
+import com.agy.util.TrustedCoreOrigin;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -27,11 +28,7 @@ public final class LocalAssetServer {
         if (uri == null || !"GET".equalsIgnoreCase(method)) {
             return null;
         }
-        String host = uri.getHost();
-        if (!com.agy.util.LoopbackHost.isLoopback(host)) {
-            return null;
-        }
-        if (uri.getPort() != enginePort) {
+        if (!TrustedCoreOrigin.matches(uri, enginePort)) {
             return null;
         }
         String path = uri.getPath();

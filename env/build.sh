@@ -31,6 +31,6 @@ pack_assets() {
 case "${1:-all}" in
     bootstrap) build_bootstrap_tar ;;
     assets)    pack_assets ;;
-    all)       build_bootstrap_tar; pack_assets ;;
+    all)       pack_assets ;;
     *) printf 'usage: build.sh [bootstrap|assets|all]\n' >&2; exit 1 ;;
 esac

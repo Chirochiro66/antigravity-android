@@ -8,8 +8,7 @@ import android.net.Uri;
 import android.util.Log;
 
 import com.agy.ui.MainActivity;
-
-import java.util.List;
+import com.agy.util.SensitiveDataRedactor;
 
 /**
  * Opens URLs and OAuth flows in the user's external web browser.
@@ -30,7 +29,8 @@ public final class CustomTabLauncher {
         Intent testIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"));
         testIntent.addCategory(Intent.CATEGORY_BROWSABLE);
 
-        // 1. Check user's explicitly chosen default browser
+        // Only target an explicitly selected default. Do not pick the first
+        // arbitrary app that registered an HTTPS intent filter.
         try {
             ResolveInfo defaultResolve = pm.resolveActivity(testIntent, PackageManager.MATCH_DEFAULT_ONLY);
             if (defaultResolve != null && defaultResolve.activityInfo != null) {
@@ -42,30 +42,14 @@ public final class CustomTabLauncher {
         } catch (Throwable t) {
             Log.w(TAG, "resolveActivity failed: " + t.getMessage());
         }
-
-        // 2. Query all activities capable of browsing web URLs
-        try {
-            List<ResolveInfo> candidates = pm.queryIntentActivities(testIntent, 0);
-            if (candidates != null) {
-                for (ResolveInfo info : candidates) {
-                    if (info != null && info.activityInfo != null) {
-                        String pkg = info.activityInfo.packageName;
-                        if (isRealBrowserPackage(pkg)) {
-                            return pkg;
-                        }
-                    }
-                }
-            }
-        } catch (Throwable t) {
-            Log.w(TAG, "queryIntentActivities failed: " + t.getMessage());
-        }
-
         return null;
     }
 
     private static boolean isRealBrowserPackage(String pkg) {
         if (pkg == null || pkg.isEmpty()) return false;
         if ("android".equals(pkg)) return false;
+        if ("com.android.internal.app.ResolverActivity".equals(pkg)) return false;
+        if ("com.android.internal.app.ChooserActivity".equals(pkg)) return false;
         if ("com.google.android.gms".equals(pkg)) return false;
         if ("com.google.android.googlequicksearchbox".equals(pkg)) return false;
         return true;
@@ -79,7 +63,16 @@ public final class CustomTabLauncher {
         try {
             uri = Uri.parse(url.trim());
         } catch (Exception e) {
-            Log.e(TAG, "bad url: " + url, e);
+            Log.e(TAG, "bad url: " + SensitiveDataRedactor.safeUrl(url), e);
+            return false;
+        }
+
+        String scheme = uri.getScheme();
+        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                || uri.getHost() == null || uri.getHost().isEmpty()
+                || uri.getUserInfo() != null) {
+            Log.w(TAG, "refusing non-web or credential-bearing URL: "
+                    + SensitiveDataRedactor.safeUrl(uri.toString()));
             return false;
         }
 
@@ -101,34 +94,29 @@ public final class CustomTabLauncher {
             view.setPackage(defaultPkg);
             try {
                 context.startActivity(view);
-                Log.i(TAG, "opened external browser pkg=" + defaultPkg + " url=" + uri);
+                Log.i(TAG, "opened external browser pkg=" + defaultPkg + " url="
+                        + SensitiveDataRedactor.safeUrl(uri.toString()));
                 return true;
             } catch (Exception e) {
                 Log.w(TAG, "failed to launch default browser pkg=" + defaultPkg + ": " + e.getMessage());
             }
         }
 
-        // 2. Fallback to generic ACTION_VIEW
+        // No verified default is configured: require an explicit user choice
+        // instead of silently launching an arbitrary HTTPS intent handler.
         Intent fallback = new Intent(Intent.ACTION_VIEW, uri);
         fallback.addCategory(Intent.CATEGORY_BROWSABLE);
         fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
-            context.startActivity(fallback);
-            Log.i(TAG, "opened browser via fallback url=" + uri);
-            return true;
-        } catch (Exception e) {
-            Log.w(TAG, "fallback launch failed: " + e.getMessage());
-        }
-
-        // 3. Fallback to system chooser
-        try {
             Intent chooser = Intent.createChooser(fallback, "Open in browser");
             chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(chooser);
-            Log.i(TAG, "opened chooser for url=" + uri);
+            Log.i(TAG, "opened chooser for url="
+                    + SensitiveDataRedactor.safeUrl(uri.toString()));
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "all browser launch attempts failed for url: " + uri, e);
+            Log.e(TAG, "browser chooser launch failed for url: "
+                    + SensitiveDataRedactor.safeUrl(uri.toString()), e);
             return false;
         }
     }

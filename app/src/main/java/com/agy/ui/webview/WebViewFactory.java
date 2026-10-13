@@ -6,6 +6,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.webkit.WebView;
 
+import com.agy.BuildConfig;
 import com.agy.bridge.AndroidBridge;
 import com.agy.theme.ThemeManager;
 
@@ -37,7 +38,7 @@ public final class WebViewFactory {
 
         WebSettingsFactory.configure(view);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && BuildConfig.DEBUG) {
             WebView.setWebContentsDebuggingEnabled(true);
         }
         return view;

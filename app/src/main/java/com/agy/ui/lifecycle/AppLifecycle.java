@@ -17,8 +17,8 @@ public final class AppLifecycle {
         WebViewLifecycle.resume(webView);
     }
 
-    public static void pauseTimers(WebView webView) {
-        WebViewLifecycle.resumeTimers(webView);
+    public static void pause(WebView webView) {
+        WebViewLifecycle.pause(webView);
     }
 
     public static void trimMemory(int level, Handler handler, WebViewHost host) {

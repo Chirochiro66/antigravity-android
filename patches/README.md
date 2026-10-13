@@ -3,9 +3,11 @@
 Patch the official arm64 `language_server` core **on a staging copy** (never the
 original archive member or `core/language_server`). Python 3 stdlib only.
 
-Groups: `eligibility`, `seccomp`, `resolv`, `auth`. All modules are adaptive
-(signature / pclntab, **no fixed offsets**), deterministic, idempotent and
-fail-closed.
+Active groups: `eligibility`, `seccomp`, `resolv`, `sigill`, `failfast`. The
+experimental `auth` module remains unit-tested but is intentionally not run:
+the Android app does not register its custom callback, so the official HTTPS
+success page is preserved. Active patches are adaptive (signature / pclntab,
+**no fixed offsets**), deterministic, idempotent and fail-closed.
 
 ## Layout
 
@@ -18,11 +20,11 @@ patch_lib/                      # shared engine
   module_base.py                # shared group scaffold
   hash.py  manifest.py  elf.py  scan.py  cli.py
 groups/
-  gates/     syscalls/     resolv/     auth/
+  gates/     syscalls/     resolv/     sigill/     failfast/     auth/
     module.py                   # run(target_path, ...) + __main__
     signatures.py               # verbatim byte literals / regexes
     analyze.py                  # pure analysis
-  resolv/ auth/ also have selftest.py (`_selftest`)
+  resolv/ auth/ have selftest.py (`_selftest`); all active groups are tested
 manifest.json                   # static description of groups/signatures
 tests/test_patches.py           # stdlib unittest coverage
 ```

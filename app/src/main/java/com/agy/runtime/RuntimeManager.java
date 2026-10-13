@@ -153,6 +153,11 @@ public final class RuntimeManager {
         network.start();
     }
 
+    /** Unregisters the process network callback when the core service stops. */
+    public void stopNetworkMonitor() {
+        network.unregister();
+    }
+
     /**
      * Refresh DNS config in place. Rewriting resolv.conf is enough for a running
      * core: it uses GODEBUG=netdns=go and re-reads the file, so the process is

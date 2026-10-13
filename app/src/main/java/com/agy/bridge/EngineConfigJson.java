@@ -31,9 +31,11 @@ public final class EngineConfigJson {
             JSONObject o = new JSONObject();
             o.put("productName", "antigravity-app");
             o.put("csrfToken", engine.getCsrfToken());
-            o.put("appVersion", RuntimeConfig.CORE_VERSION);
-            o.put("releaseChannel", "stable");
-            o.put("devMode", false);
+            o.put("appVersion", RuntimeConfig.APP_VERSION_NAME);
+            o.put("appVersionCode", RuntimeConfig.APP_VERSION_CODE);
+            o.put("coreVersion", RuntimeConfig.CORE_VERSION);
+            o.put("releaseChannel", RuntimeConfig.DEBUG ? "dev" : "stable");
+            o.put("devMode", RuntimeConfig.DEBUG);
             o.put("enginePort", runtime.getHttpsPort());
             o.put("engineBaseUrl", engine.getBaseUrl());
             o.put("filesDir", appContext.getFilesDir().getAbsolutePath());

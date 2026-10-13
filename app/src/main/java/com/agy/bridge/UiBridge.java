@@ -3,6 +3,7 @@ package com.agy.bridge;
 import android.util.Log;
 
 import com.agy.ui.MainActivity;
+import com.agy.util.SensitiveDataRedactor;
 
 /**
  * Routes UI-ready/error callbacks from JS to the host activity. addJavascriptInterface
@@ -33,7 +34,8 @@ public final class UiBridge {
     }
 
     public void onUiError(final String errorMessage) {
-        Log.e(TAG, "onUiError() received from JavaScript: " + errorMessage);
+        final String safeError = SensitiveDataRedactor.redactLine(errorMessage);
+        Log.e(TAG, "onUiError() received from JavaScript: " + safeError);
         final MainActivity host = this.activity;
         if (host == null) {
             return;
@@ -41,7 +43,7 @@ public final class UiBridge {
         host.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                host.showFatalError(errorMessage);
+                host.showFatalError(safeError);
             }
         });
     }

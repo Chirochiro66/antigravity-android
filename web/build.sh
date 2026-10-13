@@ -22,10 +22,6 @@ die() { printf 'build.sh: %s\n' "$*" >&2; exit 1; }
 
 [ -f "$MANIFEST" ] || die "manifest not found: $MANIFEST"
 
-if [ -f "$SCRIPT_DIR/patch_main.py" ] && [ -f "$SCRIPT_DIR/main.js" ]; then
-    python3 "$SCRIPT_DIR/patch_main.py" "$SCRIPT_DIR/main.js" || die "web/patch_main.py failed"
-fi
-
 rm -rf "$GEN_DIR"
 mkdir -p "$GEN_DIR"
 
@@ -106,6 +102,13 @@ emit_bundle
 
 [ "${#bundle_names[@]}" -gt 0 ] || die "no bundles emitted"
 
+# Patch only a staged copy: never dirty the checked-in upstream main.js.
+[ -f "$SCRIPT_DIR/main.js" ] || die "main.js not found"
+[ -f "$SCRIPT_DIR/patch_main.py" ] || die "patch_main.py not found"
+cp -f "$SCRIPT_DIR/main.js" "$GEN_DIR/main.js"
+python3 "$SCRIPT_DIR/patch_main.py" "$GEN_DIR/main.js" \
+    || die "web/patch_main.py failed"
+
 printf 'web: generated %d bundle(s) from %d fragment(s)\n' \
     "${#bundle_names[@]}" "$src_count"
 i=0
@@ -126,6 +129,7 @@ if command -v node >/dev/null 2>&1; then
         fi
         i=$((i + 1))
     done
+    node --check "$GEN_DIR/main.js" || die "node --check failed: generated/main.js"
 else
     printf 'node not found; skipped node --check\n'
 fi
