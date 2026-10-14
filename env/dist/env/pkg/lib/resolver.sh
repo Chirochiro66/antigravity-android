@@ -21,27 +21,53 @@ valid_package_name() {
 
 # choose_dep TERM -> package line (no repository prefix) or empty
 choose_dep() {
-    local term="$1" out="" alt nm con op ver line tab=$'\t'
+    local term="$1" out="" alt nm op ver line repo_pkg tab=$'\t'
+    # Split the term on '|' first; parse each alternative's name/operator/
+    # version with a single awk so we don't fork four processes per
+    # alternative. Then index_lookup / index_provider do the heavy lifting.
     while IFS= read -r alt; do
-        alt="$(printf '%s' "$alt" | sed 's/^ *//; s/ *$//')"
-        [ -n "$alt" ] || continue
-        nm="$(printf '%s' "$alt" | sed 's/(.*//; s/\[.*//; s/:.*//; s/[[:space:]]*$//')"
-        con="$(printf '%s' "$alt" | sed -n 's/.*(\([^)]*\)).*/\1/p')"
-        op="$(printf '%s' "$con" | awk '{print $1}')"
-        ver="$(printf '%s' "$con" | awk '{print $2}')"
+        # One awk pass extracts the three fields and prints them tab-separated.
+        # Uses POSIX-only awk (no gawk-only match(s,re,arr)); matches mawk and
+        # the BusyBox awk shipped in the Android userspace.
+        IFS=$'\t' read -r nm op ver < <(
+            printf '%s' "$alt" | awk '
+                {
+                    gsub(/^ +| +$/, "")
+                    if ($0 == "") exit
+                    # name = everything up to the first ":", "[" or "(".
+                    p = index($0, ":");  if (p == 0) p = length($0) + 1
+                    q = index($0, "[");  if (q == 0) q = length($0) + 1
+                    r = index($0, "(");  if (r == 0) r = length($0) + 1
+                    n = p; if (q < n) n = q; if (r < n) n = r
+                    nm = substr($0, 1, n - 1)
+                    gsub(/ +$/, "", nm)
+                    # Constraint = the "(op ver)" group, if any.
+                    op = ""; ver = ""
+                    rest = substr($0, n)
+                    p = index(rest, "("); q = index(rest, ")")
+                    if (p > 0 && q > p) {
+                        c = substr(rest, p + 1, q - p - 1)
+                        sp = index(c, " ")
+                        if (sp > 0) { op = substr(c, 1, sp - 1); ver = substr(c, sp + 1) }
+                        else { op = c }
+                    }
+                    print nm "\t" op "\t" ver
+                }
+            '
+        )
         [ -n "$nm" ] || continue
-        line="$(index_lookup "$nm")"; line="${line#*"$tab"}"
+        line="$(index_lookup "$nm")"
         if [ -z "$line" ]; then
-            line="$(index_provider "$nm")"; line="${line#*"$tab"}"
+            line="$(index_provider "$nm")"
         fi
         [ -n "$line" ] || continue
+        # Strip the "repo.N\t" prefix to get just the package fields.
+        line="${line#*"$tab"}"
         if [ -n "$ver" ]; then
             ver_satisfies "$(printf '%s' "$line" | cut -f2)" "$op" "$ver" || continue
         fi
         out="$line"; break
-    done <<EOF
-$(printf '%s' "$term" | tr '|' '\n')
-EOF
+    done < <(printf '%s\n' "$term" | tr '|' '\n')
     [ -n "$out" ] && printf '%s\n' "$out"
 }
 

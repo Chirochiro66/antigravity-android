@@ -192,9 +192,10 @@ cmd_remove() {
 # ---------------------------------------------------------------- queries
 cmd_list() {
     local pat="${1:-}" f
-    for f in $(index_files); do
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
         index_parse "$f" | awk -F'\t' -v p="$pat" 'p == "" || $1 ~ p { printf "%-24s %s\n", $1, $2 }'
-    done | sort -u
+    done < <(index_files) | sort -u
 }
 
 cmd_installed() {
@@ -218,9 +219,10 @@ cmd_info() {
 cmd_search() {
     [ "$#" -ge 1 ] || die "search: need a pattern"
     local pat="$1" f
-    for f in $(index_files); do
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
         index_parse "$f" | awk -F'\t' -v p="$pat" '$1 ~ p { printf "%-24s %s\n", $1, $2 }'
-    done | sort -u
+    done < <(index_files) | sort -u
 }
 
 cmd_why() {

@@ -19,27 +19,32 @@ index_rebuild_all() {
     done
 }
 
-index_tsvs() { ls "$PKG_INDEX"/repo.*.tsv 2>/dev/null; }
+# Use find -print0-friendly helper: stream the paths instead of letting `ls`
+# split on whitespace or pass through a shell glob. Callers iterate with
+# `while IFS= read -r tsv; do ... done < <(index_tsvs)`.
+index_tsvs() { find "$PKG_INDEX" -maxdepth 1 -type f -name 'repo.*.tsv' 2>/dev/null; }
 
 # index_lookup NAME -> "repo.N<TAB>line" of the highest version (all repos)
 index_lookup() {
     local name="$1" tsv base line v best="" bestver=""
-    for tsv in $(index_tsvs); do
+    while IFS= read -r tsv; do
+        [ -n "$tsv" ] || continue
         base="$(basename "$tsv" .tsv)"
         while IFS= read -r line; do
             v="$(printf '%s' "$line" | cut -f2)"
             if [ -z "$bestver" ] || deb_gt "$v" "$bestver"; then
-                bestver="$v"; best="$base	$line"
+                bestver="$v"; best="$base"$'\t'"$line"
             fi
         done < <(awk -F'\t' -v n="$name" '$1 == n' "$tsv")
-    done
+    done < <(index_tsvs)
     [ -n "$best" ] && printf '%s\n' "$best"
 }
 
 # index_provider NAME -> "repo.N<TAB>line" of a package whose Provides has NAME
 index_provider() {
     local name="$1" tsv base line
-    for tsv in $(index_tsvs); do
+    while IFS= read -r tsv; do
+        [ -n "$tsv" ] || continue
         base="$(basename "$tsv" .tsv)"
         while IFS= read -r line; do
             printf '%s\t%s\n' "$base" "$line"; return 0
@@ -47,7 +52,7 @@ index_provider() {
             c = split($7, a, ",")
             for (i = 1; i <= c; i++) { gsub(/ /, "", a[i]); if (a[i] == n) { print; exit } }
         }' "$tsv")
-    done
+    done < <(index_tsvs)
 }
 
 # E1 compat

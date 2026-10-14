@@ -82,15 +82,19 @@ if [ "$CMD" = "post" ]; then
         fi
 
         LARGE_ICON_OPT=""
-        if "$RISH_BIN" -c "test -f $LOGO_CACHE" 2>/dev/null; then
+        if "$RISH_BIN" -c "test -f $(printf %q "$LOGO_CACHE")" 2>/dev/null; then
             LARGE_ICON_OPT="-I file://$LOGO_CACHE"
         fi
 
         "$RISH_BIN" -c "cmd notification post -S bigtext $LARGE_ICON_OPT -t $(printf %q "$TITLE") $(printf %q "$TAG") $(printf %q "$BODY_TEXT")" 2>/dev/null && exit 0
     fi
 
-    cmd notification post -S bigtext -t "$TITLE" "$TAG" "$BODY_TEXT" 2>/dev/null && exit 0 || true
-    echo "[agy-notify] notification queued: $TITLE - $MESSAGE"
+    # rish is required to post notifications from a non-shell application
+    # context. The bare `cmd notification` fallback only works under shell
+    # uid, which our app process does not have, so fail loud instead of
+    # silently losing the notification.
+    echo "agy-notify: rish not available at $RISH_BIN" >&2
+    exit 1
 
 elif [ "$CMD" = "cancel" ]; then
     if [ -x "$RISH_BIN" ]; then
