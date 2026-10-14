@@ -49,6 +49,9 @@ bash build.sh --dev --no-patch
 bash build.sh --dry-run
 ```
 
+`--no-patch` is rejected unless `--dev` is set, and it cannot be combined with
+`--dry-run`; `parse_args` (`build/lib/flags.sh`) fails closed with status 2.
+
 The app version and Android package versions are configured in `config/app.env`. A published release tag must be `v<APP_VERSION_NAME>`; CI validates this before building or publishing.
 
 ## Verification

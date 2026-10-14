@@ -22,6 +22,18 @@ parse_args() {
         esac
     done
 
+    # --no-patch ships the vanilla (unpatched) core. That is a debug aid for the
+    # dev edition only (docs/BUILD.md) and makes no sense together with the
+    # patch-only dry run, so both combinations fail closed here.
+    if [ "$NO_PATCH" -eq 1 ] && [ "$DEV_MODE" -ne 1 ]; then
+        echo "--no-patch is allowed only with --dev" >&2
+        exit 2
+    fi
+    if [ "$NO_PATCH" -eq 1 ] && [ "$DRY_RUN" -eq 1 ]; then
+        echo "--no-patch cannot be combined with --dry-run" >&2
+        exit 2
+    fi
+
     # Dev edition always defaults to region bypass unless explicitly disabled.
     if [ "$DEV_MODE" -eq 1 ] && [ "$REGION_BYPASS_EXPLICIT" -eq 0 ]; then
         REGION_BYPASS=1

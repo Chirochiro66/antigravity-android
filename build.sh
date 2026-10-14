@@ -16,7 +16,7 @@
 # Flags:
 #   --region-bypass  build release with region/eligibility gate bypass (dist/antigravity-bypass.apk)
 #   --dev            build dev edition (com.agy.dev, Antigravity Dev, port 45158, dist/antigravity-dev.apk)
-#   --no-patch       debug: use the vanilla core, skip patch_runner.
+#   --no-patch       debug: use the vanilla core, skip patch_runner (requires --dev).
 #   --dry-run        run the patch stage with --dry-run only; build nothing.
 #
 # This file is only the orchestrator. Config is loaded by build/lib/paths.sh and

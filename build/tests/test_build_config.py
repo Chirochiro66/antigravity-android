@@ -22,9 +22,9 @@ class BuildConfigTest(unittest.TestCase):
                     values[key.strip()] = value.strip()
         return values
 
-    def run_tool(self, tool, *args):
+    def run_tool(self, tool, *args, env=None):
         subprocess.run([sys.executable, os.path.join(ROOT, tool), *args],
-                       check=True, cwd=ROOT)
+                       check=True, cwd=ROOT, env=env)
 
     def test_manifest_release_and_dev_are_generated_from_config(self):
         config = self.read_config(os.path.join(ROOT, "config/app.env"))
@@ -72,19 +72,25 @@ class BuildConfigTest(unittest.TestCase):
                 self.assertIn(permission, names)
 
     def test_build_config_edition_and_version(self):
+        # gen_android_config.py takes <app.env> <outdir> only; the edition lives
+        # in the environment (DEV_MODE is exported by build/lib/flags.sh, and
+        # build/phases/00-dev.sh renders the dev label/port and manifest).
         config_path = os.path.join(ROOT, "config/app.env")
         config = self.read_config(config_path)
         with tempfile.TemporaryDirectory() as temp:
-            self.run_tool("build/tools/gen_android_config.py", config_path, temp, "dev")
+            self.run_tool("build/tools/gen_android_config.py", config_path, temp,
+                          env=dict(os.environ, DEV_MODE="1"))
             generated = os.path.join(temp, "com/agy/BuildConfig.java")
             with open(generated, encoding="utf-8") as source:
                 content = source.read()
             self.assertIn('APP_VERSION_NAME="%s"' % config["APP_VERSION_NAME"], content)
             self.assertIn("APP_VERSION_CODE=%s" % config["APP_VERSION_CODE"], content)
-            self.assertIn("PORT=%s" % config["PORT_DEV"], content)
+            self.assertIn("PORT_DEV=%s" % config["PORT_DEV"], content)
+            self.assertIn("TARGET_SDK=%s" % config["TARGET_SDK"], content)
             self.assertIn("DEBUG=true", content)
 
-            self.run_tool("build/tools/gen_android_config.py", config_path, temp, "release")
+            self.run_tool("build/tools/gen_android_config.py", config_path, temp,
+                          env=dict(os.environ, DEV_MODE="0"))
             with open(generated, encoding="utf-8") as source:
                 content = source.read()
             self.assertIn("PORT=%s" % config["PORT"], content)
