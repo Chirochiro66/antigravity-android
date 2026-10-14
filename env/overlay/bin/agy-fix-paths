@@ -3,40 +3,48 @@
 #
 # Replaces legacy /data/data and modern /data/user/<id> app-private usr paths
 # in text files. Binary files (NUL byte), ELF objects and symlinks are skipped.
-# Idempotent: files already using $PREFIX are left byte-identical.
+# Idempotent: files already using $PREFIX are left byte-identical. Atomic per
+# file (tmp + mv), so running processes keep their open inode.
+#
+# Run it after installers that bake Termux interpreter paths into their output:
+#   pip install <pkg>
+#   npm install -g <pkg>
+#   ./configure && make install
+#
+# Exits 0 even when nothing matched. Shell paths in $PREFIX are preserved.
 set -uo pipefail
 
+# Resolve PREFIX the same way profile/env do, so this script is callable when
+# the AGY profile has not been sourced (cron, postinstall, ad-hoc shells).
 if [ -z "${PREFIX:-}" ]; then
     _agy_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
     PREFIX="$(cd -- "$_agy_script_dir/.." 2>/dev/null && pwd)"
     unset _agy_script_dir
 fi
-PATTERN='/data/(data|user/[0-9]+)/[^/]*/files/usr'
+export PREFIX
 
-if [ "$#" -gt 0 ]; then
-    targets=("$@")
-else
-    targets=("$PREFIX")
-fi
-
-esc="$(printf '%s' "$PREFIX" | sed 's/[\\&|]/\\&/g')"
-count=0
-
-while IFS= read -r -d '' f; do
-    [ -n "$f" ] || continue
-    tmp="$f.agyfix.$$"
-    if sed -E "s|$PATTERN|$esc|g" "$f" > "$tmp" 2>/dev/null; then
-        if cmp -s "$f" "$tmp"; then
-            rm -f "$tmp"
-        else
-            mode="$(stat -c '%a' "$f" 2>/dev/null)" || mode=""
-            [ -n "$mode" ] && chmod "$mode" "$tmp" 2>/dev/null
-            mv -f "$tmp" "$f"
-            count=$((count + 1))
-        fi
-    else
-        rm -f "$tmp"
+# Source the shared implementation. We look in the standard locations: the
+# installed prefix's pkg/lib (typical runtime case) or a sibling env/ tree
+# (host build / tests). Falls back to a vendored copy if none of the above
+# are available.
+_rewrite_sh=""
+for _d in "$PREFIX/libexec/pkg/lib" \
+          "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/../../pkg/lib"; do
+    if [ -r "$_d/rewrite.sh" ]; then
+        _rewrite_sh="$_d/rewrite.sh"
+        break
     fi
-done < <(grep -rIlZ -E -e "$PATTERN" -- "${targets[@]}" 2>/dev/null)
+done
+unset _d
+if [ -z "$_rewrite_sh" ]; then
+    printf 'agy-fix-paths: cannot locate rewrite.sh (PREFIX=%s)\n' "$PREFIX" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+. "$_rewrite_sh"
+unset _rewrite_sh
 
-printf 'agy-fix-paths: rewrote %d file(s) -> %s\n' "$count" "$PREFIX"
+# Suppress the shared module's stdout line; we print our own with the stable
+# "agy-fix-paths:" prefix.
+REWRITE_QUIET=1 rewrite_paths "$@"
+printf 'agy-fix-paths: rewrote %d file(s) -> %s\n' "${REWRITE_COUNT:-0}" "$PREFIX"

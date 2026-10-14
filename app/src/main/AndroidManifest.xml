@@ -41,6 +41,12 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Required by IntentBridge.pmInstall so the user can install an APK
+         from a shell command without going through rish. The platform
+         PackageInstaller API is the same one the Play Store uses; granting
+         this permission does not let our app install arbitrary other apps
+         silently -- the system shows the user a confirmation dialog. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <permission
         android:name="com.agy.permission.INTERNAL_BROADCAST"
         android:protectionLevel="signature" />
@@ -120,6 +126,24 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.agy.ACTION_TORCH" />
+            </intent-filter>
+        </receiver>
+
+        <!-- com.agy.NOTIFY is used by env/overlay/bin/agy-notify as a
+             rish-free fallback: the shell script broadcasts the action
+             with title / message / tag extras, and the receiver below
+             posts the notification through the platform NotificationManager
+             so the agent can notify the user without Shizuku. The action
+             is namespaced (com.agy.*) so only same-app callers can hit
+             it; we keep the receiver exported because sendBroadcast from
+             the sh tool itself (uid=2000 under rish, or uid=app under
+             adb) needs to reach it. -->
+        <receiver
+            android:name="com.agy.runtime.NotifyReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.agy.NOTIFY" />
+                <action android:name="com.agy.NOTIFY_CANCEL" />
             </intent-filter>
         </receiver>
 

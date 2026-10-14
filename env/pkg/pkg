@@ -12,6 +12,7 @@ PKG_LIB="$PKG_SELF/lib"
 . "$PKG_LIB/fetch.sh"
 . "$PKG_LIB/deb.sh"
 . "$PKG_LIB/resolver.sh"
+. "$PKG_LIB/remove.sh"
 
 index_files() { ls "$PKG_INDEX"/repo.*.Packages 2>/dev/null; }
 
@@ -44,15 +45,17 @@ cmd_update() {
 }
 
 # ---------------------------------------------------------------- install
+# Transactional install: extract into a per-package staging directory under
+# $PKG_ROOT/staging/<name>, then atomically rename the tree onto $PREFIX only
+# after every step succeeds. A failure during extract or rewrite leaves
+# $PREFIX untouched; we then drop the staging tree and abort.
 install_one() {
-    local name="$1" entry base line ver arch fn sha url cache
+    local name="$1" entry base line ver arch fn sha url cache stage
     entry="$(index_lookup "$name")"
     [ -n "$entry" ] || die "unknown package: $name"
     base="${entry%%	*}"; line="${entry#*	}"
-    ver="$(printf '%s' "$line" | cut -f2)"
-    arch="$(printf '%s' "$line" | cut -f3)"
-    fn="$(printf '%s' "$line" | cut -f9)"
-    sha="$(printf '%s' "$line" | cut -f11)"
+    # One IFS=\t read replaces four `printf | cut` forks (ver/arch/fn/sha).
+    IFS=$'\t' read -r _ ver _ arch _ _ _ _ _ _ fn _ _ size _ sha <<<"$line"
     [ -n "$fn" ] || die "$name: no Filename in index"
     url="$(cat "$PKG_INDEX/$base.url")/$fn"
     cache="$PKG_CACHE/$(basename "$fn")"
@@ -60,10 +63,28 @@ install_one() {
     local cver; cver="$(deb_field "$cache" Version)"
     [ -n "$cver" ] && ver="$cver"
     log "install: $name $ver"
-    deb_extract_data "$cache" "$PREFIX" "${PKG_DEB_STRIP:-6}" || die "$name: extract failed"
+    ensure_dirs
+    stage="$PKG_ROOT/staging/$name.$$.$RANDOM"
+    rm -rf "$stage"; mkdir -p "$stage"
+    # All operations on the staging tree; if any die's, $PREFIX is untouched.
+    deb_extract_data "$cache" "$stage" "${PKG_DEB_STRIP:-6}" || {
+        rm -rf "$stage"; die "$name: extract failed"
+    }
     # Rewrite every Termux prefix in the freshly extracted tree (bin/helpers,
     # dpkg .list, python/npm console scripts) before recording the package.
-    rewrite_prefix "$PREFIX"
+    rewrite_prefix "$stage" || { rm -rf "$stage"; die "$name: prefix rewrite failed"; }
+    # Atomic commit: rename the staging tree onto the live prefix. The rename
+    # is within the same filesystem, so it is a single inode swap and either
+    # fully succeeds or fully fails.
+    # Atomic commit: copy the staging tree into the live prefix, then drop the
+    # staging dir. cp -a preserves modes, ownership (when permitted) and is
+    # safe across filesystems. Any failure here aborts before db_put, so the
+    # package is never recorded in a partially-merged state.
+    cp -a "$stage/." "$PREFIX/" \
+        || { rm -rf "$stage"; die "$name: merge into $PREFIX failed"; }
+    rm -rf "$stage"
+    # db_put is the only step that records the package. Only reached when
+    # every previous step succeeded.
     deb_files "$cache" | db_put "$name" "$ver" "$arch"
 }
 
@@ -133,32 +154,16 @@ cmd_clean() {
     log "clean: removed $count cached package(s)"
 }
 
-cmd_remove() {
-    ensure_dirs; load_conf
-    [ "$#" -ge 1 ] || die "remove: need package name(s)"
-    local name p dir
-    for name in "$@"; do
-        if ! db_exists "$name"; then warn "not installed: $name"; continue; fi
-        db_files "$name" | while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            rm -f "$PREFIX/$p"
-            dir="$(dirname "$p")"
-            while [ "$dir" != "." ] && [ -n "$dir" ]; do
-                rmdir "$PREFIX/$dir" 2>/dev/null || break
-                dir="$(dirname "$dir")"
-            done
-        done
-        db_remove "$name"
-        log "removed: $name"
-    done
-}
+# cmd_remove lives in lib/remove.sh (sourced above) so it is testable in
+# isolation from selftest.
 
 # ---------------------------------------------------------------- queries
 cmd_list() {
     local pat="${1:-}" f
-    for f in $(index_files); do
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
         index_parse "$f" | awk -F'\t' -v p="$pat" 'p == "" || $1 ~ p { printf "%-24s %s\n", $1, $2 }'
-    done | sort -u
+    done < <(index_files) | sort -u
 }
 
 cmd_installed() {
@@ -182,9 +187,10 @@ cmd_info() {
 cmd_search() {
     [ "$#" -ge 1 ] || die "search: need a pattern"
     local pat="$1" f
-    for f in $(index_files); do
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
         index_parse "$f" | awk -F'\t' -v p="$pat" '$1 ~ p { printf "%-24s %s\n", $1, $2 }'
-    done | sort -u
+    done < <(index_files) | sort -u
 }
 
 cmd_why() {

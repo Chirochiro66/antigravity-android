@@ -43,7 +43,38 @@ public final class EngineConfigJson {
             o.put("home", appContext.getFilesDir().getAbsolutePath());
             o.put("tmpDir", appContext.getCacheDir().getAbsolutePath());
             o.put("appDataDir", runtime.getAppDataDir().getAbsolutePath());
+            // rish availability. We expose the raw boolean and the
+            // categorised lists so the Web UI can both render a status pill
+            // and pick the right path per command. The two arrays below
+            // mirror what IntentBridge.tryNative() and NotificationBridge
+            // cover today; expand them as more commands get a native
+            // implementation.
             o.put("shizukuAvailable", shizuku.isAvailable());
+            org.json.JSONArray nativeFeatures = new org.json.JSONArray();
+            // Anything the platform Android API can answer for us; no rish
+            // needed. The list mirrors IntentBridge.tryNative() patterns
+            // and NotificationBridge.post() fallback.
+            nativeFeatures.put("pm install");
+            nativeFeatures.put("am start");
+            nativeFeatures.put("cmd battery");
+            nativeFeatures.put("cmd connectivity");
+            nativeFeatures.put("cmd settings get");
+            nativeFeatures.put("agy-notify (via broadcast)");
+            nativeFeatures.put("file access (via MANAGE_EXTERNAL_STORAGE)");
+            o.put("nativeFeatures", nativeFeatures);
+            // Anything still gated on rish today. The agent should prompt
+            // the user to install Shizuku when one of these is needed.
+            // Note: arbitrary shell is the elephant in the room; once a JS
+            // path to it exists (via ShellBridge), the same tryNative
+            // prefix-match applies and the agent only needs Shizuku for
+            // commands the native bridge does not cover.
+            org.json.JSONArray needsShizuku = new org.json.JSONArray();
+            needsShizuku.put("arbitrary shell (pip / git / pkg / etc.)");
+            needsShizuku.put("pm grant / appops set");
+            needsShizuku.put("logcat on other packages");
+            needsShizuku.put("cmd notification (logo icon)");
+            needsShizuku.put("dumpsys notification (rich listing)");
+            o.put("needsShizuku", needsShizuku);
             o.put("theme", theme.getTheme());
             return o.toString();
         } catch (Exception e) {

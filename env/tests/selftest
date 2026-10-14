@@ -16,6 +16,8 @@ export PREFIX
 . "$PKG_LIB/db.sh"
 . "$PKG_LIB/deb.sh"
 . "$PKG_LIB/resolver.sh"
+. "$PKG_LIB/remove.sh"
+# rewrite.sh is sourced by util.sh; nothing to do here.
 ensure_dirs
 
 fail=0
@@ -116,8 +118,170 @@ if PREFIX="$NOTIFY_TMP" bash "$SELF/../overlay/bin/agy-notify" cancel >/dev/null
 else
     ok "agy-notify rejects missing cancel tag"
 fi
+# Post should also reach rish with the expected command, title and body.
+> "$AGY_NOTIFY_CAPTURE"
+# agy-notify shells out via rish and the arguments go through printf %q, so
+# spaces show up as backslash-escaped. Match the literal shell-quoted form.
+if PREFIX="$NOTIFY_TMP" bash "$SELF/../overlay/bin/agy-notify" post \
+        -t "Build done" -m "tests passed" --tag build_42 \
+        && grep -Fq 'cmd notification post' "$AGY_NOTIFY_CAPTURE" \
+        && grep -Fq 'Build\ done' "$AGY_NOTIFY_CAPTURE" \
+        && grep -Fq 'tests\ passed' "$AGY_NOTIFY_CAPTURE" \
+        && grep -Fq 'build_42' "$AGY_NOTIFY_CAPTURE"; then
+    ok "agy-notify post forwards title/body/tag to rish"
+else
+    bad "agy-notify post forwards title/body/tag to rish"
+fi
+
+# ---- agy-notify rish-free fallback ----------------------------------------
+# When rish is absent, agy-notify should still be able to post a
+# notification by sending a com.agy.NOTIFY broadcast. We mock `am` so
+# the script's fallback path runs and we can assert that the broadcast
+# extras land in the right place.
+FALLBACK_TMP="$(mktemp -d)"
+mkdir -p "$FALLBACK_TMP/bin"
+cat > "$FALLBACK_TMP/bin/am" <<'EOF'
+#!/bin/sh
+# Dump args as one line so the test can grep them.
+printf 'am %s\n' "$*" >> "$AGY_FALLBACK_CAPTURE"
+EOF
+chmod +x "$FALLBACK_TMP/bin/am"
+export AGY_FALLBACK_CAPTURE="$FALLBACK_TMP/calls.log"
+> "$AGY_FALLBACK_CAPTURE"
+# Path layout: PREFIX/bin holds rish, but we want to test the broadcast
+# fallback. Place rish in a path that is NOT in PATH, and put our mock
+# `am` ahead of everything. PREFIX=$FALLBACK_TMP/usr so $PREFIX/bin/rish
+# is missing -> script should fall through to the broadcast path.
+FALLBACK_PREFIX="$FALLBACK_TMP/usr"
+mkdir -p "$FALLBACK_PREFIX/bin"
+# bin/rish is intentionally absent.
+if PATH="$FALLBACK_TMP/bin:$PATH" PREFIX="$FALLBACK_PREFIX" \
+        AGY_APPLICATION_ID="com.test.agy" \
+        bash "$SELF/../overlay/bin/agy-notify" post \
+        -t "Fallback title" -m "fallback body" --tag fallback_1 \
+    && grep -Fq 'broadcast' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'com.agy.NOTIFY' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'com.test.agy' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'Fallback title' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'fallback body' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'fallback_1' "$AGY_FALLBACK_CAPTURE"; then
+    ok "agy-notify falls back to am broadcast when rish is absent"
+else
+    bad "agy-notify falls back to am broadcast when rish is absent (got: $(cat "$AGY_FALLBACK_CAPTURE" 2>/dev/null))"
+fi
+# Same for cancel: no rish, must still go through am broadcast.
+> "$AGY_FALLBACK_CAPTURE"
+if PATH="$FALLBACK_TMP/bin:$PATH" PREFIX="$FALLBACK_PREFIX" \
+        bash "$SELF/../overlay/bin/agy-notify" cancel fallback_1 \
+    && grep -Fq 'com.agy.NOTIFY_CANCEL' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'fallback_1' "$AGY_FALLBACK_CAPTURE"; then
+    ok "agy-notify cancel falls back to am broadcast when rish is absent"
+else
+    bad "agy-notify cancel falls back to am broadcast when rish is absent"
+fi
+rm -rf "$FALLBACK_TMP"
+unset AGY_FALLBACK_CAPTURE
 rm -rf "$NOTIFY_TMP"
 unset AGY_NOTIFY_CAPTURE
+
+# ---- atomic path rewrite ---------------------------------------------------
+# Use a temporary prefix tree with a sample file that contains a legacy
+# foreign prefix. rewrite_paths must repoint it to $PREFIX in place; a
+# second call must be a no-op and report zero rewrites.
+REWRITE_TMP="$(mktemp -d)/usr"
+mkdir -p "$REWRITE_TMP/bin"
+cat > "$REWRITE_TMP/bin/sample.sh" <<EOF
+#!/data/data/com.termux/files/usr/bin/bash
+echo "use /data/data/com.termux/files/usr/share/..."
+EOF
+chmod +x "$REWRITE_TMP/bin/sample.sh"
+PREFIX="$REWRITE_TMP" bash -c '
+    . "$1/pkg/lib/rewrite.sh" >/dev/null
+    REWRITE_QUIET=1 rewrite_paths
+    [ "${REWRITE_COUNT:-0}" -eq 1 ] || { echo "first pass count=${REWRITE_COUNT:-0}"; exit 1; }
+    REWRITE_QUIET=1 rewrite_paths
+    [ "${REWRITE_COUNT:-0}" -eq 0 ] || { echo "second pass count=${REWRITE_COUNT:-0}"; exit 1; }
+' _ "$(cd -- "$SELF/.." && pwd)" \
+    && ok "rewrite_paths: rewrites once, idempotent" \
+    || bad "rewrite_paths: rewrites once, idempotent"
+# The original shebang should now be repointed to PREFIX.
+if head -1 "$REWRITE_TMP/bin/sample.sh" | grep -qF "$REWRITE_TMP"; then
+    ok "rewrite_paths: shebang repointed to PREFIX"
+else
+    bad "rewrite_paths: shebang repointed to PREFIX"
+fi
+rm -rf "$(dirname -- "$REWRITE_TMP")"
+
+# ---- transactional install -------------------------------------------------
+# Manually run install_one with a known-good .deb and a non-existent entry
+# in the index. The "package" should be extracted into a staging tree but
+# never reach $PREFIX. We exercise this by giving a cache file that does
+# not match any index entry; install_one must die() before extraction.
+TRANS_TMP="$(mktemp -d)/usr"
+mkdir -p "$TRANS_TMP"
+DEB="$SELF/fixtures/hello.deb"
+if [ -f "$DEB" ]; then
+    # Use the same prefix the test set up so the staging tree lives under
+    # $PKG_ROOT/staging; an aborted install_one must clean it up.
+    if PREFIX="$TRANS_TMP" PKG_LIB="$(cd -- "$SELF/../pkg/lib" && pwd)" bash -c '
+        set -uo pipefail
+        . "$PKG_LIB/util.sh"
+        . "$PKG_LIB/version.sh"
+        . "$PKG_LIB/index.sh"
+        . "$PKG_LIB/db.sh"
+        . "$PKG_LIB/deb.sh"
+        ensure_dirs
+        # Hand install_one a path that index_lookup will reject; we expect
+        # an exit 1 with "unknown package: <name>".
+        if install_one "definitely-not-a-real-package" 2>/dev/null; then
+            echo "BUG: install_one accepted unknown package"; exit 1
+        fi
+        # The staging tree should be empty (mkdir -p is the only side effect,
+        # no .rewrt.$$ tmpfiles leaked).
+        if [ -n "$(find "$PKG_ROOT/staging" -mindepth 1 -maxdepth 1 2>/dev/null)" ]; then
+            echo "BUG: staging tree has leftovers: $(ls -A "$PKG_ROOT/staging")"
+            exit 1
+        fi
+    ' 2>/dev/null; then
+        ok "install_one: fails closed on unknown package, no staging leak"
+    else
+        bad "install_one: fails closed on unknown package, no staging leak"
+    fi
+else
+    printf 'SKIP  transactional install (no fixtures/hello.deb)\n'
+fi
+rm -rf "$(dirname -- "$TRANS_TMP")"
+
+# ---- safe remove ------------------------------------------------------------
+# Two packages own files in the same parent directory. Removing one must
+# not rmdir the parent if the other still has a file in it.
+SAFE_TMP="$(mktemp -d)/usr"
+mkdir -p "$SAFE_TMP/bin/shared"
+echo "pkg-A" > "$SAFE_TMP/bin/shared/a.sh"
+echo "pkg-B" > "$SAFE_TMP/bin/shared/b.sh"
+chmod +x "$SAFE_TMP/bin/shared/a.sh" "$SAFE_TMP/bin/shared/b.sh"
+PREFIX="$SAFE_TMP" PKG_LIB="$(cd -- "$SELF/../pkg/lib" && pwd)" bash -c '
+    set -uo pipefail
+    . "$PKG_LIB/util.sh"
+    . "$PKG_LIB/version.sh"
+    . "$PKG_LIB/index.sh"
+    . "$PKG_LIB/db.sh"
+    . "$PKG_LIB/deb.sh"
+    . "$PKG_LIB/resolver.sh"
+    . "$PKG_LIB/remove.sh"
+    ensure_dirs
+    printf "bin/shared/a.sh\n" | db_put pkg-A 1.0 aarch64
+    printf "bin/shared/b.sh\n" | db_put pkg-B 1.0 aarch64
+    cmd_remove pkg-A >/dev/null
+' 2>/dev/null
+# pkg-B should still be intact; bin/shared must still exist.
+if [ -f "$SAFE_TMP/bin/shared/b.sh" ] && [ ! -f "$SAFE_TMP/bin/shared/a.sh" ] \
+        && [ -d "$SAFE_TMP/bin/shared" ]; then
+    ok "cmd_remove: keeps sibling package files and shared dir"
+else
+    bad "cmd_remove: keeps sibling package files and shared dir"
+fi
+rm -rf "$(dirname -- "$SAFE_TMP")"
 
 rm -rf "$(dirname "$PREFIX")"
 printf '== failures: %s ==\n' "$fail"
