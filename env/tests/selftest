@@ -132,6 +132,55 @@ if PREFIX="$NOTIFY_TMP" bash "$SELF/../overlay/bin/agy-notify" post \
 else
     bad "agy-notify post forwards title/body/tag to rish"
 fi
+
+# ---- agy-notify rish-free fallback ----------------------------------------
+# When rish is absent, agy-notify should still be able to post a
+# notification by sending a com.agy.NOTIFY broadcast. We mock `am` so
+# the script's fallback path runs and we can assert that the broadcast
+# extras land in the right place.
+FALLBACK_TMP="$(mktemp -d)"
+mkdir -p "$FALLBACK_TMP/bin"
+cat > "$FALLBACK_TMP/bin/am" <<'EOF'
+#!/bin/sh
+# Dump args as one line so the test can grep them.
+printf 'am %s\n' "$*" >> "$AGY_FALLBACK_CAPTURE"
+EOF
+chmod +x "$FALLBACK_TMP/bin/am"
+export AGY_FALLBACK_CAPTURE="$FALLBACK_TMP/calls.log"
+> "$AGY_FALLBACK_CAPTURE"
+# Path layout: PREFIX/bin holds rish, but we want to test the broadcast
+# fallback. Place rish in a path that is NOT in PATH, and put our mock
+# `am` ahead of everything. PREFIX=$FALLBACK_TMP/usr so $PREFIX/bin/rish
+# is missing -> script should fall through to the broadcast path.
+FALLBACK_PREFIX="$FALLBACK_TMP/usr"
+mkdir -p "$FALLBACK_PREFIX/bin"
+# bin/rish is intentionally absent.
+if PATH="$FALLBACK_TMP/bin:$PATH" PREFIX="$FALLBACK_PREFIX" \
+        AGY_APPLICATION_ID="com.test.agy" \
+        bash "$SELF/../overlay/bin/agy-notify" post \
+        -t "Fallback title" -m "fallback body" --tag fallback_1 \
+    && grep -Fq 'broadcast' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'com.agy.NOTIFY' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'com.test.agy' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'Fallback title' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'fallback body' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'fallback_1' "$AGY_FALLBACK_CAPTURE"; then
+    ok "agy-notify falls back to am broadcast when rish is absent"
+else
+    bad "agy-notify falls back to am broadcast when rish is absent (got: $(cat "$AGY_FALLBACK_CAPTURE" 2>/dev/null))"
+fi
+# Same for cancel: no rish, must still go through am broadcast.
+> "$AGY_FALLBACK_CAPTURE"
+if PATH="$FALLBACK_TMP/bin:$PATH" PREFIX="$FALLBACK_PREFIX" \
+        bash "$SELF/../overlay/bin/agy-notify" cancel fallback_1 \
+    && grep -Fq 'com.agy.NOTIFY_CANCEL' "$AGY_FALLBACK_CAPTURE" \
+    && grep -Fq 'fallback_1' "$AGY_FALLBACK_CAPTURE"; then
+    ok "agy-notify cancel falls back to am broadcast when rish is absent"
+else
+    bad "agy-notify cancel falls back to am broadcast when rish is absent"
+fi
+rm -rf "$FALLBACK_TMP"
+unset AGY_FALLBACK_CAPTURE
 rm -rf "$NOTIFY_TMP"
 unset AGY_NOTIFY_CAPTURE
 

@@ -1,10 +1,22 @@
 #!/data/user/0/com.agy/files/usr/bin/bash
 # agy-notify - Post and manage Android notifications.
+#
+# Notification transport selection (best first):
+#   1. rish / Shizuku  - "cmd notification post" with bigtext and a cached
+#      logo icon. Always preferred when available.
+#   2. am broadcast    - sends com.agy.NOTIFY to the AGY app's
+#      NotifyReceiver, which posts via the platform NotificationManager.
+#      Always available, never requires Shizuku.
+#
+# Cancel goes through the same two paths. List inspects the system tray
+# via rish (when available) and otherwise prints a hint that the tray
+# can be inspected visually on the device.
 set -e
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 PREFIX="${PREFIX:-$(cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd)}"
 RISH_BIN="$PREFIX/bin/rish"
+PKG_NAME="${AGY_APPLICATION_ID:-com.agy}"
 
 USAGE="Usage: agy-notify [post|cancel|list] [options]
 Commands:
@@ -62,51 +74,88 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# post_broadcast: send a com.agy.NOTIFY broadcast that the in-app
+# NotifyReceiver translates into a platform NotificationManager call.
+# This is the rish-free path and always works.
+post_broadcast() {
+    local title="$1" subtitle="$2" message="$3" tag="$4"
+    local args=( -a com.agy.NOTIFY -p "$PKG_NAME" --es title "$title" )
+    [ -n "$subtitle" ] && args+=( --es subtitle "$subtitle" )
+    [ -n "$message" ]  && args+=( --es message "$message" )
+    [ -n "$tag" ]      && args+=( --es tag "$tag" )
+    am broadcast "${args[@]}" >/dev/null 2>&1
+}
+
+cancel_broadcast() {
+    local tag="$1"
+    am broadcast -a com.agy.NOTIFY_CANCEL -p "$PKG_NAME" --es tag "$tag" \
+        >/dev/null 2>&1
+}
+
+post_rish() {
+    local title="$1" subtitle="$2" message="$3" tag="$4"
+    local LOGO_CACHE="/data/local/tmp/agy_logo.png"
+    local SRC_LOGO="/storage/emulated/0/Documents/antigravity_release/docs/assets/logo.png"
+    if [ ! -f "$LOGO_CACHE" ] && [ -f "$SRC_LOGO" ]; then
+        "$RISH_BIN" -c "cp -f $(printf %q "$SRC_LOGO") $(printf %q "$LOGO_CACHE") && chmod 644 $(printf %q "$LOGO_CACHE")" 2>/dev/null || true
+    fi
+
+    local LARGE_ICON_OPT=""
+    if "$RISH_BIN" -c "test -f $(printf %q "$LOGO_CACHE")" 2>/dev/null; then
+        LARGE_ICON_OPT="-I file://$LOGO_CACHE"
+    fi
+
+    local body="$message"
+    if [ -n "$subtitle" ]; then
+        body="[$subtitle] $message"
+    fi
+    "$RISH_BIN" -c "cmd notification post -S bigtext $LARGE_ICON_OPT -t $(printf %q "$title") $(printf %q "$tag") $(printf %q "$body")" 2>/dev/null
+}
+
+cancel_rish() {
+    "$RISH_BIN" -c "cmd notification cancel $(printf %q "$1")" 2>/dev/null
+}
+
 if [ "$CMD" = "post" ]; then
     if [ -z "$MESSAGE" ] && [ -n "$TITLE" ]; then
         MESSAGE="$TITLE"
         TITLE="Antigravity"
     fi
 
-    BODY_TEXT="$MESSAGE"
-    if [ -n "$SUBTITLE" ]; then
-        BODY_TEXT="[$SUBTITLE] $MESSAGE"
+    if [ -x "$RISH_BIN" ] && post_rish "$TITLE" "$SUBTITLE" "$MESSAGE" "$TAG"; then
+        exit 0
     fi
 
-    if [ -x "$RISH_BIN" ]; then
-        # Cache an optional logo for high-resolution notifications.
-        LOGO_CACHE="/data/local/tmp/agy_logo.png"
-        SRC_LOGO="/storage/emulated/0/Documents/antigravity_release/docs/assets/logo.png"
-        if [ ! -f "$LOGO_CACHE" ] && [ -f "$SRC_LOGO" ]; then
-            "$RISH_BIN" -c "cp -f $(printf %q "$SRC_LOGO") $(printf %q "$LOGO_CACHE") && chmod 644 $(printf %q "$LOGO_CACHE")" 2>/dev/null || true
-        fi
-
-        LARGE_ICON_OPT=""
-        if "$RISH_BIN" -c "test -f $(printf %q "$LOGO_CACHE")" 2>/dev/null; then
-            LARGE_ICON_OPT="-I file://$LOGO_CACHE"
-        fi
-
-        "$RISH_BIN" -c "cmd notification post -S bigtext $LARGE_ICON_OPT -t $(printf %q "$TITLE") $(printf %q "$TAG") $(printf %q "$BODY_TEXT")" 2>/dev/null && exit 0
+    # Fall back to the in-app broadcast path. Always available, never
+    # depends on Shizuku. The user still gets a status-bar notification
+    # -- just without the cached logo icon.
+    if post_broadcast "$TITLE" "$SUBTITLE" "$MESSAGE" "$TAG"; then
+        exit 0
     fi
 
-    # rish is required to post notifications from a non-shell application
-    # context. The bare `cmd notification` fallback only works under shell
-    # uid, which our app process does not have, so fail loud instead of
-    # silently losing the notification.
-    echo "agy-notify: rish not available at $RISH_BIN" >&2
+    echo "agy-notify: failed to post (no rish and broadcast unavailable)" >&2
     exit 1
 
 elif [ "$CMD" = "cancel" ]; then
-    if [ -x "$RISH_BIN" ]; then
-        "$RISH_BIN" -c "cmd notification cancel $(printf %q "$TAG")" 2>/dev/null || true
+    if [ -x "$RISH_BIN" ] && cancel_rish "$TAG" 2>/dev/null; then
+        exit 0
     fi
+    cancel_broadcast "$TAG"
+    exit 0
 
 elif [ "$CMD" = "list" ]; then
     if [ -x "$RISH_BIN" ]; then
-        "$RISH_BIN" -c "dumpsys notification --noredact" 2>/dev/null | grep -E "pkg=|android.title=|android.text=" | head -n 40
-    else
-        echo "[agy-notify] rish unavailable to inspect system notification tray"
+        "$RISH_BIN" -c "dumpsys notification --noredact" 2>/dev/null \
+            | grep -E "pkg=|android.title=|android.text=" | head -n 40
+        exit 0
     fi
+    # Without rish we cannot inspect the system tray from inside the app
+    # sandbox; the platform NotificationManager API exposes the same data
+    # to the app UI. Print a short hint so the script's caller (typically
+    # an agent log scraper) does not assume success.
+    echo "[agy-notify] rish unavailable; the active tray is visible on the device."
+    echo "[agy-notify] for a structured listing, use the in-app notification panel."
+    exit 0
 
 else
     echo "$USAGE"
