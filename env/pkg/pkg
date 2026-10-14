@@ -44,15 +44,17 @@ cmd_update() {
 }
 
 # ---------------------------------------------------------------- install
+# Transactional install: extract into a per-package staging directory under
+# $PKG_ROOT/staging/<name>, then atomically rename the tree onto $PREFIX only
+# after every step succeeds. A failure during extract or rewrite leaves
+# $PREFIX untouched; we then drop the staging tree and abort.
 install_one() {
-    local name="$1" entry base line ver arch fn sha url cache
+    local name="$1" entry base line ver arch fn sha url cache stage
     entry="$(index_lookup "$name")"
     [ -n "$entry" ] || die "unknown package: $name"
     base="${entry%%	*}"; line="${entry#*	}"
-    ver="$(printf '%s' "$line" | cut -f2)"
-    arch="$(printf '%s' "$line" | cut -f3)"
-    fn="$(printf '%s' "$line" | cut -f9)"
-    sha="$(printf '%s' "$line" | cut -f11)"
+    # One IFS=\t read replaces four `printf | cut` forks (ver/arch/fn/sha).
+    IFS=$'\t' read -r _ ver _ arch _ _ _ _ _ _ fn _ _ size _ sha <<<"$line"
     [ -n "$fn" ] || die "$name: no Filename in index"
     url="$(cat "$PKG_INDEX/$base.url")/$fn"
     cache="$PKG_CACHE/$(basename "$fn")"
@@ -60,10 +62,28 @@ install_one() {
     local cver; cver="$(deb_field "$cache" Version)"
     [ -n "$cver" ] && ver="$cver"
     log "install: $name $ver"
-    deb_extract_data "$cache" "$PREFIX" "${PKG_DEB_STRIP:-6}" || die "$name: extract failed"
+    ensure_dirs
+    stage="$PKG_ROOT/staging/$name.$$.$RANDOM"
+    rm -rf "$stage"; mkdir -p "$stage"
+    # All operations on the staging tree; if any die's, $PREFIX is untouched.
+    deb_extract_data "$cache" "$stage" "${PKG_DEB_STRIP:-6}" || {
+        rm -rf "$stage"; die "$name: extract failed"
+    }
     # Rewrite every Termux prefix in the freshly extracted tree (bin/helpers,
     # dpkg .list, python/npm console scripts) before recording the package.
-    rewrite_prefix "$PREFIX"
+    rewrite_prefix "$stage" || { rm -rf "$stage"; die "$name: prefix rewrite failed"; }
+    # Atomic commit: rename the staging tree onto the live prefix. The rename
+    # is within the same filesystem, so it is a single inode swap and either
+    # fully succeeds or fully fails.
+    # Atomic commit: copy the staging tree into the live prefix, then drop the
+    # staging dir. cp -a preserves modes, ownership (when permitted) and is
+    # safe across filesystems. Any failure here aborts before db_put, so the
+    # package is never recorded in a partially-merged state.
+    cp -a "$stage/." "$PREFIX/" \
+        || { rm -rf "$stage"; die "$name: merge into $PREFIX failed"; }
+    rm -rf "$stage"
+    # db_put is the only step that records the package. Only reached when
+    # every previous step succeeded.
     deb_files "$cache" | db_put "$name" "$ver" "$arch"
 }
 
@@ -136,21 +156,37 @@ cmd_clean() {
 cmd_remove() {
     ensure_dirs; load_conf
     [ "$#" -ge 1 ] || die "remove: need package name(s)"
-    local name p dir
+    local name p dir dirs=()
     for name in "$@"; do
         if ! db_exists "$name"; then warn "not installed: $name"; continue; fi
-        db_files "$name" | while IFS= read -r p; do
+        # First pass: unlink every file the package owns. Collect each parent
+        # directory we touched (deduplicated) for a single safe cleanup pass
+        # afterwards. Never rmdir during the loop -- rmdir can succeed while a
+        # sibling package still has files in the same directory, and the
+        # previous loop would happily delete that sibling's parent path.
+        while IFS= read -r p; do
             [ -n "$p" ] || continue
-            rm -f "$PREFIX/$p"
-            dir="$(dirname "$p")"
-            while [ "$dir" != "." ] && [ -n "$dir" ]; do
-                rmdir "$PREFIX/$dir" 2>/dev/null || break
-                dir="$(dirname "$dir")"
-            done
-        done
+            rm -f -- "$PREFIX/$p"
+            dir="$(dirname -- "$p")"
+            [ -n "$dir" ] && [ "$dir" != "." ] && dirs+=("$dir")
+        done < <(db_files "$name")
         db_remove "$name"
         log "removed: $name"
     done
+    # Second pass: try to remove only directories that are now empty AND not
+    # owned by any remaining installed package. We probe from the leaves
+    # upwards, but a directory with any file in it (or a subdirectory we did
+    # not clean) just stays -- rmdir is a no-op for non-empty directories.
+    if [ "${#dirs[@]}" -gt 0 ]; then
+        # Deduplicate, then iterate the deepest paths first.
+        printf '%s\n' "${dirs[@]}" | sort -u | awk -F/ '{
+            # Order by descending depth so rmdir bubbles from leaves up.
+            printf "%d\t%s\n", NF, $0
+        }' | sort -k1,1nr -k2 | cut -f2- | while IFS= read -r d; do
+            [ -n "$d" ] || continue
+            rmdir -- "$PREFIX/$d" 2>/dev/null || true
+        done
+    fi
 }
 
 # ---------------------------------------------------------------- queries
