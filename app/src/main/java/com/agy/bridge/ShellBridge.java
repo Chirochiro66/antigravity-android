@@ -5,7 +5,26 @@ import android.content.Context;
 import com.agy.shell.IntentBridge;
 import com.agy.shell.ShizukuBridge;
 
-/** Shizuku shell access exposed to the Web UI. */
+/**
+ * Shizuku shell access with native-first dispatch.
+ *
+ * <p>{@link #exec(String)} tries {@link IntentBridge#tryNative(String)}
+ * first and only falls through to rish / Shizuku for commands the native
+ * bridge does not cover. When rish is unavailable, the call returns a
+ * clear error string instead of silently returning {@code null}, so the
+ * Web UI can surface a meaningful message to the user.
+ *
+ * <p><b>Wiring status.</b> No current Java caller instantiates this
+ * class. The Web UI does not have a {@code @JavascriptInterface exec()}
+ * path today (AndroidBridge intentionally does not expose arbitrary
+ * shell to embedded frames). The class is kept ready for the next
+ * feature that does need a shell sink (e.g. an in-app agent chat UI
+ * that wants to run {@code pip / git / pkg} through rish while
+ * keeping {@code pm install / am start} rish-free via
+ * {@link IntentBridge}). Until then, the live rish path is via
+ * {@code NotificationBridge} (fallback for the bigtext notification
+ * icon).
+ */
 public final class ShellBridge {
 
     private final IntentBridge intent;
