@@ -9,7 +9,7 @@
 #   assets/runtime/manifest.json  (sha256 of every bundled runtime file)
 #   web/ (built via web/build.sh) -> assets/web (byte-for-byte invariant)
 #   bus/ -> assets/bus (if present)
-#   env/dist/env/ (or env/{pkg,overlay,bootstrap}) -> assets/env/{pkg,overlay,bootstrap}
+#   env/dist/env/ (or env/{pkg,overlay,bootstrap}) -> assets/env/{pkg,overlay,bootstrap,manifest.json}
 #   gen_android_config + aapt (R.java) -> javac -> d8 -> aapt (-A assets) -> zip
 #   -> zipalign -> apksigner -> dist/agy.apk -> apksigner verify
 #

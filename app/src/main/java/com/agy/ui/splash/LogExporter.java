@@ -64,31 +64,39 @@ public final class LogExporter {
             return sb.toString();
         }
 
-        File logFile = new File(context.getFilesDir(), "logs/core.log");
+        appendLogFile(sb, new File(context.getFilesDir(), "logs/core.log"), "logs/core.log");
+        // The bionic prefix install runs on a background thread and is not fatal
+        // for the core, so its outcome is only visible here (or in logcat).
+        sb.append("\n=== Env Install Log (files/logs/env.log) ===\n");
+        appendLogFile(sb, new File(context.getFilesDir(), "logs/env.log"), "logs/env.log");
+        return sb.toString();
+    }
+
+    /** Appends the tail of a log file with each line redacted; never throws. */
+    private static void appendLogFile(StringBuilder sb, File logFile, String label) {
         if (!logFile.exists() || logFile.length() == 0) {
-            sb.append("(logs/core.log is empty or does not exist)\n");
-        } else {
-            try {
-                long len = logFile.length();
-                long skipBytes = Math.max(0, len - MAX_LOG_BYTES);
-                try (FileInputStream fis = new FileInputStream(logFile)) {
-                    if (skipBytes > 0) {
-                        long skipped = fis.skip(skipBytes);
-                        sb.append("... [truncated ").append(skipped).append(" bytes; showing last ")
-                                .append(len - skipped).append(" bytes of ").append(len).append(" total] ...\n");
-                    }
-                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(fis, UTF8))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            sb.append(SensitiveDataRedactor.redactLine(line)).append("\n");
-                        }
+            sb.append("(").append(label).append(" is empty or does not exist)\n");
+            return;
+        }
+        try {
+            long len = logFile.length();
+            long skipBytes = Math.max(0, len - MAX_LOG_BYTES);
+            try (FileInputStream fis = new FileInputStream(logFile)) {
+                if (skipBytes > 0) {
+                    long skipped = fis.skip(skipBytes);
+                    sb.append("... [truncated ").append(skipped).append(" bytes; showing last ")
+                            .append(len - skipped).append(" bytes of ").append(len).append(" total] ...\n");
+                }
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(fis, UTF8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        sb.append(SensitiveDataRedactor.redactLine(line)).append("\n");
                     }
                 }
-            } catch (Exception e) {
-                sb.append("Error reading log file: ").append(e.getMessage()).append("\n");
             }
+        } catch (Exception e) {
+            sb.append("Error reading ").append(label).append(": ").append(e.getMessage()).append("\n");
         }
-        return sb.toString();
     }
 
     public static void copyToClipboard(Context context) {

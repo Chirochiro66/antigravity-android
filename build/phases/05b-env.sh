@@ -4,11 +4,20 @@
 #
 # Source is config/paths.env's ENV_DIST (env/dist/env) when any of its parts
 # exist, else the loose ENV_DIR (env/{pkg,overlay,bootstrap}). Staged 1:1 into
-# assets/env/{pkg,overlay,bootstrap}. Idempotent: STAGE_ASSETS is rebuilt per
-# run and assets/env is removed before copying. env/ is NEVER modified.
+# assets/env/{pkg,overlay,bootstrap,manifest.json}. Idempotent: STAGE_ASSETS is
+# rebuilt per run and assets/env is removed before copying. env/ is NEVER
+# modified.
+#
+# assets/env/manifest.json is mandatory: EnvInstaller reads it as
+# env/manifest.json (EnvPaths.ASSET_MANIFEST) before it touches $PREFIX and
+# fails closed when it is missing, which leaves the installed app on the base
+# runtime only (no files/usr, no pkg, no python3). The staged manifest is
+# regenerated from the staged bytes and must stay byte-identical to the source
+# bundle, so a stale manifest can never be packaged.
 
 log "[5b/9] assets/env (bionic toolchain)"
 ENV_ASSETS="$STAGE_ASSETS/env"
+ENV_MAKE_MANIFEST="${ENV_DIR:-${PROJECT:-$AGY_HOME}/env}/scripts/make_manifest.py"
 
 # Resolve the source root (env/dist/env preferred), accepting either a real
 # gzip bootstrap.tar.gz or a plain bootstrap.tar.
@@ -23,13 +32,20 @@ elif [ -d "$ENV_DIR/pkg" ] || [ -d "$ENV_DIR/overlay" ] \
         || [ -f "$ENV_DIR/bootstrap/bootstrap.tar" ]; then
     ENV_ROOT="$ENV_DIR"
     log "  source: env/{pkg,overlay,bootstrap}"
+elif [ "${AGY_ALLOW_MISSING_ENV:-0}" = "1" ]; then
+    log "  env/ absent or empty, skipped (AGY_ALLOW_MISSING_ENV=1)"
+    log "  WARNING: this APK cannot deploy \$PREFIX: no bash/pkg/python3 on device"
 else
-    log "  env/ absent or empty, skipped"
+    die "env bundle inputs missing (looked in $ENV_DIST and $ENV_DIR):" \
+        "the APK would ship without the bionic \$PREFIX;" \
+        "run 'bash env/build.sh assets' or set AGY_ALLOW_MISSING_ENV=1 to build anyway"
 fi
 
 if [ -n "$ENV_ROOT" ]; then
     [ -d "$ENV_ROOT/pkg" ]     || die "env pkg missing: $ENV_ROOT/pkg"
     [ -d "$ENV_ROOT/overlay" ] || die "env overlay missing: $ENV_ROOT/overlay"
+    [ -f "$ENV_MAKE_MANIFEST" ] \
+        || die "env manifest generator missing: $ENV_MAKE_MANIFEST"
 
     # Never ship a plain .tar under a .gz name (or the reverse): verify by
     # content, not by extension, and gzip a plain tar at stage time.
@@ -63,10 +79,33 @@ if [ -n "$ENV_ROOT" ]; then
         || die "staged bootstrap is not gzip: $BOOTSTRAP_STAGED"
     gzip -t "$BOOTSTRAP_STAGED" || die "staged bootstrap gzip integrity failed: $BOOTSTRAP_STAGED"
 
+    # seed-packages.txt is optional, but it is part of the bundle identity
+    # (manifest "seedPackages") and must be staged before the manifest.
+    if [ -f "$ENV_ROOT/seed-packages.txt" ]; then
+        cp -f "$ENV_ROOT/seed-packages.txt" "$ENV_ASSETS/seed-packages.txt"
+    fi
+
+    # assets/env/manifest.json: the file the app verifies the bundle against on
+    # device. Regenerate it from the staged bytes so the packaged manifest can
+    # never describe a different bundle than the one inside the APK.
+    python3 "$ENV_MAKE_MANIFEST" "$ENV_ASSETS" >/dev/null \
+        || die "cannot generate assets/env/manifest.json"
+    ENV_MANIFEST="$ENV_ASSETS/manifest.json"
+    [ -f "$ENV_MANIFEST" ] || die "assets/env/manifest.json was not generated"
+    if [ -f "$ENV_ROOT/manifest.json" ]; then
+        cmp -s "$ENV_ROOT/manifest.json" "$ENV_MANIFEST" \
+            || die "env manifest is stale: $ENV_ROOT/manifest.json does not describe $ENV_ROOT" \
+                   "(regenerate it with: bash env/build.sh assets)"
+    fi
+    python3 "$ENV_MAKE_MANIFEST" --check "$ENV_ASSETS" >/dev/null \
+        || die "staged assets/env/manifest.json does not match the staged bundle"
+    log "  manifest ok: bundle=$(python3 -c \
+        'import json,sys; print(json.load(open(sys.argv[1]))["bundleId"])' "$ENV_MANIFEST")"
+
     # byte-for-byte invariant for the copyable trees
     for _tree in pkg overlay; do
         diff -r "$ENV_ROOT/$_tree" "$ENV_ASSETS/$_tree" >/dev/null 2>&1 \
             || die "invariant failed: assets/env/$_tree != $ENV_ROOT/$_tree"
     done
-    log "  invariant ok: assets/env == $ENV_ROOT (pkg, overlay, bootstrap.tar.gz=gzip)"
+    log "  invariant ok: assets/env == $ENV_ROOT (pkg, overlay, bootstrap.tar.gz=gzip, manifest.json)"
 fi

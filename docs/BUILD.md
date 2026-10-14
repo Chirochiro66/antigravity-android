@@ -59,10 +59,16 @@ Run the offline suites without Android SDK tools:
 python3 -m unittest discover -s patches/tests -v
 python3 -m unittest discover -s build/tests -v
 bash build/tests/selftest.sh
+bash build/tests/env_assets_test.sh
 bash bus/selftest
 bash env/tests/selftest
 bash web/tests/selftest.sh
 ```
+
+`build/tests/env_assets_test.sh` runs the real `05b-env.sh` staging phase in a
+disposable directory and asserts the `assets/env` contract the app depends on,
+including the fail-closed paths (stale manifest, absent bundle) and the
+APK-level verifier `build/tools/verify_env_assets.py`.
 
 Check environment asset staging in a disposable directory:
 
@@ -75,6 +81,31 @@ rm -rf "$tmp"
 
 `bash web/build.sh` regenerates ignored files under `web/generated/`; it patches a generated copy of `web/main.js`, leaving the upstream source unchanged. The APK build independently checks that staged web assets match the generated tree.
 
+## Env bundle asset contract (`assets/env/**`)
+
+The bionic userspace ships inside the APK and is deployed to the app-private
+`files/usr` prefix on first launch. Every asset below is load-bearing:
+
+| Asset | Consumer | Behavior when missing |
+| --- | --- | --- |
+| `env/manifest.json` | `EnvBundleManifest.load()` (`EnvPaths.ASSET_MANIFEST`) | hard failure: the prefix is never installed |
+| `env/bootstrap/bootstrap.tar.gz` | `BootstrapExtractor` (symlinks preserved) | hard failure |
+| `env/pkg/**` | `PkgInstaller` (`$PREFIX/libexec/pkg` + `bin/pkg` shim) | hard failure |
+| `env/overlay/**` | `OverlayCopier` (`bin/`, `etc/`, `lib/`) | hard failure |
+
+`build/phases/05b-env.sh` regenerates `assets/env/manifest.json` from the staged
+bytes with `env/scripts/make_manifest.py`, and dies when the manifest of the
+source bundle (`env/dist/env/manifest.json`) disagrees with those bytes — a
+stale or missing manifest is exactly what leaves an installed app on the base
+runtime, with no `usr/bin`, `pkg` or `python3` on the device. A missing
+`env/` bundle aborts the build unless `AGY_ALLOW_MISSING_ENV=1` is set.
+
+`build/phases/09b-verify.sh` then runs `build/tools/verify_env_assets.py`, which
+recomputes the bundle identity (bootstrap SHA-256 and symlink count, `pkg`/`overlay`
+tree digests, `bundleId`) from the bytes inside the finished APK, checks the
+field contract that `EnvBundleManifest` enforces on device, and compares the
+packaged tree with the staged one.
+
 ## Pipeline
 
 The orchestrator runs `build/phases/*.sh` in lexical order:
@@ -82,9 +113,11 @@ The orchestrator runs `build/phases/*.sh` in lexical order:
 1. Generate build constants and an edition-specific Android manifest.
 2. Stage and patch the core binary, then verify the patch states.
 3. Assemble glibc/runtime assets and generate the runtime SHA-256 manifest.
-4. Build and stage web, bus and Bionic environment assets.
+4. Build and stage web, bus and Bionic environment assets (`assets/env/manifest.json`
+   included and verified against the staged bundle).
 5. Generate `R.java`, compile Java, run D8, package, align and sign the APK.
-6. Verify the APK signature and packaged bootstrap archive.
+6. Verify the APK signature and that the packaged `assets/env` bundle is complete
+   and describes itself.
 
 ## Troubleshooting
 
@@ -92,3 +125,4 @@ The orchestrator runs `build/phases/*.sh` in lexical order:
 - **`android.jar` or `r8.jar` SHA-256 mismatch:** Restore the pinned file or review and intentionally update its configured checksum.
 - **Release signing fails:** Confirm all four `AGY_RELEASE_*` inputs are set and that the keystore alias and passwords are correct. CI also checks `AGY_RELEASE_CERT_SHA256`.
 - **Runtime integrity check fails on device:** Check storage errors and confirm the packaged runtime manifest matches the staged files.
+- **The device only has the base runtime (no `usr/bin`, `pkg` or `python3`):** the installed APK was packaged without a complete `assets/env` bundle. `EnvInstaller` refuses to build `$PREFIX` when `assets/env/manifest.json` is missing or stale and keeps the core running, so look for `env install failed ...` in `files/logs/env.log` (included in the in-app "Copy Logs" export) or under the `EnvInstallScheduler` tag in logcat. Rebuild with `bash env/build.sh assets && bash build.sh --dev`; the staging phase and `build/tests/env_assets_test.sh` now fail closed on both cases.

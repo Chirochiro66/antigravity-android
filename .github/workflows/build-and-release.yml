@@ -58,8 +58,13 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s patches/tests -v
+          python3 -m py_compile build/tools/verify_env_assets.py \
+                               build/tools/gen_android_config.py \
+                               build/tools/prepare_manifest.py \
+                               build/tools/validate_release_tag.py
           bash bus/selftest
           bash build.sh --dry-run
+          bash build/tests/env_assets_test.sh
           bash env/tests/selftest
           bash web/tests/selftest.sh
           openssl x509 -in app/src/main/res/raw/agy_core_cert.pem -noout -subject
@@ -68,6 +73,7 @@ jobs:
           ASSETS="$tmp/env" bash env/build.sh all
           ASSETS="$tmp/env" bash env/tests/invariant
           for script in build.sh build/lib/*.sh build/phases/*.sh \
+                        build/tests/*.sh \
                         env/build.sh web/build.sh \
                         web/tests/selftest.sh bus/selftest; do
             bash -n "$script"

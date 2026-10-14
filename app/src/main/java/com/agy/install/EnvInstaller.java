@@ -48,9 +48,16 @@ public final class EnvInstaller {
         validatePrefixLocation(ctx, prefix);
 
         EnvBundleManifest manifest = EnvBundleManifest.load(assets);
-        String bootstrapAsset = AssetPicker.pick(assets, EnvPaths.ASSET_BOOTSTRAP);
+        // assets/env/manifest.json (EnvBundleManifest above) and the bootstrap
+        // are both mandatory: without either one the prefix is not built and the
+        // app stays on the base runtime. The plain-tar candidate exists because
+        // legacy aapt rewrites a trailing ".gz" asset name to ".tar"
+        // (see build/phases/08-package.sh); extraction auto-detects gzip.
+        String bootstrapAsset = AssetPicker.pick(assets,
+                EnvPaths.ASSET_BOOTSTRAP, EnvPaths.ASSET_BOOTSTRAP_PLAIN);
         if (bootstrapAsset == null) {
-            throw new IllegalStateException("required asset missing: " + EnvPaths.ASSET_BOOTSTRAP);
+            throw new IllegalStateException("required asset missing: " + EnvPaths.ASSET_BOOTSTRAP
+                    + " (or " + EnvPaths.ASSET_BOOTSTRAP_PLAIN + ")");
         }
         if (isInstalled(ctx)) {
             updateManagedLayers(ctx, assets, prefix, bootstrapAsset, manifest);
