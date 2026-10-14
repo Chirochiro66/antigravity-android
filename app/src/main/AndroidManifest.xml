@@ -45,7 +45,7 @@
          from a shell command without going through rish. The platform
          PackageInstaller API is the same one the Play Store uses; granting
          this permission does not let our app install arbitrary other apps
-         silently -- the system shows the user a confirmation dialog. -->
+         silently - the system shows the user a confirmation dialog. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <permission
         android:name="com.agy.permission.INTERNAL_BROADCAST"
