@@ -1,8 +1,9 @@
 # env
 
-Bionic toolchain for AGY: a self-contained Android prefix installed at
-`$PREFIX` (`/data/data/com.agy/files/usr`), a package manager (`pkg`), and a
-path-rewrite helper. No root, no proot.
+Bionic toolchain for AGY: a self-contained Android prefix at `$PREFIX` under
+the installed app's private `files/usr` directory, a package manager (`pkg`),
+and a path-rewrite helper. Paths and app id are resolved at install/runtime;
+no fixed `com.agy` path is required. No root, no proot.
 
 ```
 env/bootstrap/   Termux bootstrap archive + prefix patch
@@ -14,18 +15,19 @@ env/tests/       offline selftest / invariant / e3 checks
 
 ## Termux prefix rewriting
 
-The Termux bootstrap and its packages are compiled with
-`/data/data/com.termux/files/usr` hardcoded: in shebangs, in helper bodies
-(`gzexe` tmpdir, dpkg `.list`, `*-config`), and in absolute symlinks. Our
-prefix is different, so every occurrence must be repointed.
+The Termux bootstrap and its packages can contain legacy
+`/data/data/<application-id>/files/usr` or user-scoped
+`/data/user/<user-id>/<application-id>/files/usr` paths in shebangs, helper
+bodies (`gzexe` tmpdir, dpkg `.list`, `*-config`) and absolute symlinks. The
+active prefix is app-private and varies by application id and Android user.
 
-Two layers do this:
+Two layers handle these paths:
 
-1. **Install time.** `EnvInstaller.rewriteTermuxPrefixes(prefix)` walks text
-   files under `$PREFIX/{bin,libexec,etc,share,var}` and replaces every
-   `/data/data/com.<anyid>/files/usr` with `$PREFIX` (atomic in-place rewrite;
-   binary/ELF files and symlinks skipped). `pkg install` does the same for each
-   package right after extraction, via `rewrite_prefix` in `pkg/lib/util.sh`.
+1. **Install time.** `TermuxShebangRewriter`, `TermuxPrefixRewriter` and
+   `TermuxSymlinkFixer` repoint recognized prefixes to the active `$PREFIX`.
+   Text rewrites cover `$PREFIX/{bin,libexec,etc,share,var}`; absolute prefix
+   symlinks are fixed separately. `pkg install` applies the same dynamic text
+   rewrite to each extracted package via `rewrite_prefix` in `pkg/lib/util.sh`.
 2. **After third-party installers.** `pip`, `npm` and friends write console
    scripts that bake in the Termux interpreter path. Run the shipped helper:
 

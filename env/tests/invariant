@@ -25,7 +25,21 @@ for src in pkg overlay; do
     [ "$bad_n" = 0 ] && ok "$src: $n files 1:1" || true
 done
 
-# 2. bootstrap archive present and preserves symlinks
+# 2. seed package policy is staged byte-for-byte and the manifest is current
+if [ -f "$ENV_DIR/seed-packages.txt" ]; then
+    if [ -f "$DIST/env/seed-packages.txt" ] \
+            && cmp -s "$ENV_DIR/seed-packages.txt" "$DIST/env/seed-packages.txt"; then
+        ok "seed package list staged 1:1"
+    else
+        bad "seed package list missing or differs"
+    fi
+else
+    ok "no seed packages configured (empty seed list)"
+fi
+python3 "$ENV_DIR/scripts/make_manifest.py" --check "$DIST/env" \
+    && ok "env manifest matches staged inputs" || bad "env manifest stale/missing"
+
+# 3. bootstrap archive present and preserves symlinks
 TAR="$DIST/env/bootstrap/bootstrap.tar.gz"
 if [ -f "$TAR" ]; then
     links="$(tar -tvzf "$TAR" 2>/dev/null | grep -c '^l')"
@@ -39,7 +53,7 @@ else
     bad "missing bootstrap.tar.gz"
 fi
 
-# 3. no build metadata leaked into pkg/overlay
+# 4. no build metadata leaked into pkg/overlay
 while IFS= read -r -d '' f; do
     case "$f" in
         *.tmp|*.part) bad "stray temp file: ${f#"$DIST/"}" ;;

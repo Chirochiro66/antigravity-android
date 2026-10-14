@@ -122,7 +122,7 @@ public final class ThemeController {
     }
 
     public boolean isLauncherDark() {
-        return mode == ThemeColors.MODE_DARK;
+        return isDark();
     }
 
     public void applyLauncherIcon() {

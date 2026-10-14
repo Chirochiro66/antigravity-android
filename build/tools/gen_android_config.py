@@ -4,12 +4,13 @@
 Usage: gen_android_config.py <app.env> <outdir>
 
 Writes:
-  <outdir>/<pkg path>/BuildConfig.java   (ports, app/core versions, APIs, edition)
+  <outdir>/<pkg path>/BuildConfig.java   (PORT, PORT_DEV, CORE_VERSION,
+                                           OAUTH_SCHEME, APP_NAME, MIN_API)
   <outdir>/res/values/gen.xml            (app_name, https_server_port,
                                            oauth_scheme)
 
-Usage: gen_android_config.py <app.env> <outdir> [dev|release]
-Plain KEY=VALUE parsing: no shell logic in the env file, no interpolation.
+Used by build/phases/00-dev.sh (and consumed by 06-rjava.sh). Plain KEY=VALUE
+parsing: no shell logic in the env file, no interpolation.
 """
 import html
 import os
@@ -34,35 +35,24 @@ def java_string(value):
 
 
 def main(argv):
-    if len(argv) not in (3, 4):
-        sys.stderr.write("usage: gen_android_config.py <app.env> <outdir> [dev|release]\n")
+    if len(argv) != 3:
+        sys.stderr.write("usage: gen_android_config.py <app.env> <outdir>\n")
         return 2
 
     env_path, outdir = argv[1], argv[2]
-    edition = argv[3] if len(argv) == 4 else "release"
-    if edition not in ("dev", "release"):
-        sys.stderr.write("edition must be dev or release\n")
-        return 2
     env = parse_env(env_path)
 
     pkg = env.get("PKG", "com.agy")
-    release_port = env.get("PORT", "0")
+    port = env.get("PORT", "0")
     port_dev = env.get("PORT_DEV", "0")
-    port = port_dev if edition == "dev" else release_port
     core_version = env.get("CORE_VERSION", "")
-    app_version_name = env.get("APP_VERSION_NAME", "0.0.0")
-    app_version_code = env.get("APP_VERSION_CODE", "1")
+    app_version_name = env.get("APP_VERSION_NAME", "2.3.0")
+    app_version_code = env.get("APP_VERSION_CODE", "15")
     oauth_scheme = env.get("OAUTH_SCHEME", "")
-    app_name = env.get("APP_NAME_DEV" if edition == "dev" else "APP_NAME", "")
+    app_name = env.get("APP_NAME", "")
     min_api = env.get("MIN_API", "24")
     target_sdk = env.get("TARGET_SDK", "28")
-    try:
-        app_version_code = int(app_version_code)
-        min_api = int(min_api)
-        target_sdk = int(target_sdk)
-    except ValueError:
-        sys.stderr.write("APP_VERSION_CODE, MIN_API and TARGET_SDK must be integers\n")
-        return 2
+    is_debug = "true" if os.environ.get("DEV_MODE") == "1" else "false"
 
     pkg_dir = os.path.join(outdir, *pkg.split("."))
     res_values_dir = os.path.join(outdir, "res", "values")
@@ -83,7 +73,7 @@ def main(argv):
         f.write("    public static final String APP_NAME=%s;\n" % java_string(app_name))
         f.write("    public static final int MIN_API=%s;\n" % min_api)
         f.write("    public static final int TARGET_SDK=%s;\n" % target_sdk)
-        f.write("    public static final boolean DEBUG=%s;\n" % str(edition == "dev").lower())
+        f.write("    public static final boolean DEBUG=%s;\n" % is_debug)
         f.write("}\n")
 
     gen_xml_path = os.path.join(res_values_dir, "gen.xml")

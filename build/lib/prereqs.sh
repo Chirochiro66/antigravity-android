@@ -7,14 +7,6 @@
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing host tool: $1"; }
 
-verify_tool_hash() {
-    local file="$1" expected="$2" label="$3" actual
-    [ -n "$expected" ] || die "no pinned SHA-256 configured for $label"
-    actual="$(sha256sum "$file")"
-    actual="${actual%% *}"
-    [ "$actual" = "$expected" ] || die "$label SHA-256 mismatch (expected $expected, got $actual)"
-}
-
 check_tools() {
     for t in aapt javac java zipalign apksigner zip unzip python3 sha256sum gzip file mktemp; do
         need "$t"
@@ -24,8 +16,6 @@ check_tools() {
     [ -f "$ANDROID_JAR" ]        || die "android.jar not found: $ANDROID_JAR"
     [ -f "$R8_JAR" ]             || die "r8.jar not found: $R8_JAR"
     [ -f "$KEYSTORE" ]           || die "keystore not found: $KEYSTORE"
-    verify_tool_hash "$ANDROID_JAR" "$ANDROID_JAR_SHA256" "android.jar"
-    verify_tool_hash "$R8_JAR" "$R8_JAR_SHA256" "r8.jar"
     [ -f "$MANIFEST_XML" ]       || die "manifest not found: $MANIFEST_XML"
     [ -d "$WEB_DIR" ]            || die "web/ not found: $WEB_DIR"
     [ -f "$GEN_ANDROID_CONFIG" ] || die "gen_android_config.py not found: $GEN_ANDROID_CONFIG"

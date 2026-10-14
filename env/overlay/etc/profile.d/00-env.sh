@@ -1,5 +1,5 @@
 # 00-env.sh -- core environment of the tlx prefix.
-export HOME="${HOME:-$(dirname "$PREFIX")/home}"
+export HOME="${HOME:-$(dirname "$PREFIX")}"
 export TMPDIR="$PREFIX/tmp"
 export PATH="$PREFIX/bin"
 export LD_LIBRARY_PATH="$PREFIX/lib"
@@ -10,7 +10,14 @@ else
 fi
 export TERMUX__PREFIX="$PREFIX"
 export TERMUX__ROOTFS="/"
-export TERMUX_APP__DATA_DIR="$(dirname "$(dirname "$PREFIX")")"
+export TERMUX_APP__DATA_DIR="$(dirname "$PREFIX")"
+# Bridges set the package id for core-launched tools; derive it for direct shells.
+if [ -z "${AGY_APPLICATION_ID:-}" ]; then
+    _agy_pkg_dir="$(dirname "$(dirname "$PREFIX")")"
+    AGY_APPLICATION_ID="$(basename "$_agy_pkg_dir")"
+    unset _agy_pkg_dir
+fi
+export AGY_APPLICATION_ID
 export SSL_CERT_FILE="$PREFIX/etc/tls/cert.pem"
 export CURL_CA_BUNDLE="$PREFIX/etc/tls/cert.pem"
 export GIT_SSL_CAINFO="$PREFIX/etc/tls/cert.pem"

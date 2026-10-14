@@ -115,32 +115,70 @@ The agent has native access to Shizuku's elevated ADB shell (`uid=2000(shell)`):
 
 ---
 
-## 6. Background Daemon & Android Notifications
+## 6. Background Daemon & AI Task Manager (`agy-daemon`)
 
-Antigravity includes an ultra-lightweight background scheduler and native notification CLI:
+Antigravity includes an ultra-lightweight background scheduler, watcher, and AI task manager:
+- **Footprint:** <10MB RAM, 0.0% CPU idle.
+- **Persistence:** Automatically started alongside `CoreServerService` under Android Foreground Service Partial WakeLock (keeps executing even when screen is locked or turned off).
 
-- **Notifications (`agy-notify`):**
-  Post, list, or clear Android status notifications from the terminal:
-  ```bash
-  # Send an alert to user notification tray:
-  agy-notify post -t "Build Finished" -m "Tests passed without errors"
+### Service Control
+```bash
+# Check daemon service status, PID, and recent task execution logs:
+agy-daemon status
 
-  # Inspect active notifications:
-  agy-notify list
-  ```
+# Manage daemon service lifecycle manually:
+agy-daemon start
+agy-daemon stop
+agy-daemon restart
+```
 
-- **Autonomous Background Daemon (`agy-daemon`):**
-  Enables delayed, interval, and event-based triggers that continue executing even when the screen is turned off:
-  ```bash
-  # Schedule task after duration (e.g. 4h, 30m, 10s):
-  agy-daemon add --name "Nightly Backup" --delay 4h --command "tar -czf ~/backup.tar.gz ~/Documents"
+### AI Task Manager (`agy-daemon task`)
+The agent and user can manage autonomous background jobs using structured commands (supports `--json` for machine parsing):
 
-  # Run periodically:
-  agy-daemon add --name "Disk Health Check" --interval 30m --command "df -h > ~/.gemini/disk.log"
+```bash
+# 1. List scheduled tasks:
+agy-daemon task list
+agy-daemon task list --json
+agy-daemon task list --active-only
 
-  # Watch GitHub repo for new PRs:
-  agy-daemon add --name "Watch PRs" --github-pr "werdio325-png/antigravity-android" --interval 5m --command "agy-notify post -t 'GitHub Alert' -m 'New Pull Request detected'"
+# 2. Add delayed or recurring tasks:
+# Delay (e.g. 10s, 30m, 4h):
+agy-daemon task add --name "Review Code" --delay 30m --prompt "Check test results and summarize changes"
 
-  # List active background tasks:
-  agy-daemon list
-  ```
+# Interval (e.g. 5m, 1h):
+agy-daemon task add --name "Disk Health" --interval 1h --command "df -h > ~/.gemini/disk.log"
+
+# Standard 5-field Cron ("min hour dom month dow"):
+agy-daemon task add --name "Nightly Clean" --cron "0 3 * * *" --command "rm -rf ~/.gemini/tmp/*"
+
+# Event & Watcher Triggers:
+agy-daemon task add --name "Watch PRs" --github-pr "owner/repo" --interval 5m --command "agy-notify post -t 'New PR' -m 'PR detected'"
+agy-daemon task add --name "File Watcher" --watch-file "/path/to/project/build.gradle" --command "pkg selftest"
+agy-daemon task add --name "Battery Alert" --battery-below 15 --command "agy-notify post -t 'Low Battery' -m 'Save your work'"
+
+# 3. Task Management & Debugging:
+# Pause / Resume:
+agy-daemon task pause <task_id_or_name>
+agy-daemon task resume <task_id_or_name>
+
+# Trigger immediate test run:
+agy-daemon task run-now <task_id_or_name>
+
+# Inspect task execution logs and output:
+agy-daemon task logs <task_id_or_name>
+
+# Remove task or clear all:
+agy-daemon task remove <task_id_or_name>
+agy-daemon clear
+```
+
+### Native Android Notifications (`agy-notify`)
+Post, list, or clear Android status notifications from the terminal:
+```bash
+# Send an alert to user notification tray:
+agy-notify post -t "Build Finished" -m "Tests passed without errors"
+
+# Inspect active notifications:
+agy-notify list
+```
+

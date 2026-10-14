@@ -5,8 +5,10 @@ import android.system.Os;
 import android.util.Log;
 
 import java.io.File;
+import java.util.UUID;
+import java.util.regex.Matcher;
 
-/** Repoints absolute symlinks that point into the Termux prefix at our prefix. */
+/** Repoints absolute Android-private symlinks at the active app prefix. */
 public final class TermuxSymlinkFixer {
 
     private static final String TAG = "TermuxSymlinkFixer";
@@ -14,14 +16,20 @@ public final class TermuxSymlinkFixer {
     private TermuxSymlinkFixer() {
     }
 
-    public static void fix(File prefix) {
-        int fixed = fixIn(prefix, prefix.getAbsolutePath());
-        if (fixed > 0) {
-            Log.i(TAG, "repointed " + fixed + " termux symlink(s) -> " + prefix.getAbsolutePath());
-        }
+    public static int fix(File prefix) {
+        return fix(prefix, prefix.getAbsolutePath());
     }
 
-    private static int fixIn(File dir, String newPrefix) {
+    /** Rewrites links in a staging tree to the final (stable) prefix path. */
+    public static int fix(File root, String targetPrefix) {
+        int fixed = fixIn(root, targetPrefix);
+        if (fixed > 0) {
+            Log.i(TAG, "repointed " + fixed + " Android-prefix symlink(s) -> " + targetPrefix);
+        }
+        return fixed;
+    }
+
+    private static int fixIn(File dir, String targetPrefix) {
         File[] children = dir.listFiles();
         if (children == null) {
             return 0;
@@ -36,26 +44,33 @@ public final class TermuxSymlinkFixer {
                     Log.w(TAG, "readlink failed " + child + ": " + e);
                     continue;
                 }
-                if (target == null || !target.startsWith(EnvPaths.TERMUX_PREFIX)) {
+                if (target == null) {
                     continue;
                 }
-                String suffix = target.substring(EnvPaths.TERMUX_PREFIX.length());
+                Matcher matcher = EnvPaths.TERMUX_ANY_PREFIX.matcher(target);
+                if (!matcher.lookingAt()) {
+                    continue;
+                }
+                String suffix = target.substring(matcher.end());
                 if (!suffix.isEmpty() && !suffix.startsWith("/")) {
                     continue;
                 }
-                String newTarget = newPrefix + suffix;
+                String newTarget = targetPrefix + suffix;
+                File temporary = new File(child.getParentFile(),
+                        child.getName() + ".agy-link-" + UUID.randomUUID());
                 try {
-                    if (!child.delete()) {
-                        Log.w(TAG, "cannot delete symlink " + child);
-                        continue;
-                    }
-                    Os.symlink(newTarget, child.getAbsolutePath());
+                    Os.symlink(newTarget, temporary.getAbsolutePath());
+                    Os.rename(temporary.getAbsolutePath(), child.getAbsolutePath());
                     fixed++;
                 } catch (Exception e) {
+                    try {
+                        Os.remove(temporary.getAbsolutePath());
+                    } catch (ErrnoException ignored) {
+                    }
                     Log.w(TAG, "cannot repoint symlink " + child + ": " + e);
                 }
             } else if (child.isDirectory()) {
-                fixed += fixIn(child, newPrefix);
+                fixed += fixIn(child, targetPrefix);
             }
         }
         return fixed;

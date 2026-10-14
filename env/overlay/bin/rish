@@ -1,7 +1,12 @@
 #!/system/bin/sh
-BASEDIR=$(dirname "$0")
+# Shizuku shell helper; PREFIX is derived from this installed script when needed.
+BASEDIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)"
+if [ -z "${PREFIX:-}" ]; then
+  PREFIX="$(CDPATH= cd -- "$BASEDIR/.." 2>/dev/null && pwd)"
+fi
+
 DEX=""
-for d in "$BASEDIR" "$BASEDIR/../share/rish" "$PREFIX/share/rish" "$PREFIX/../runtime/bin" "/data/user/0/com.agy/files/runtime/bin" "/data/data/com.agy/files/runtime/bin"; do
+for d in "$BASEDIR" "$BASEDIR/../share/rish" "$PREFIX/share/rish" "$PREFIX/../runtime/bin"; do
   if [ -f "$d/rish_shizuku.dex" ]; then
     DEX="$d/rish_shizuku.dex"
     break
@@ -9,7 +14,7 @@ for d in "$BASEDIR" "$BASEDIR/../share/rish" "$PREFIX/share/rish" "$PREFIX/../ru
 done
 
 if [ -z "$DEX" ]; then
-  echo "rish: rish_shizuku.dex not found" >&2
+  echo "rish: rish_shizuku.dex not found under $PREFIX or its runtime" >&2
   exit 1
 fi
 
@@ -24,6 +29,17 @@ if [ "$SDK" -ge 34 ]; then
   fi
 fi
 
-# Bundled with the AGY app: default to its own package id.
-[ -z "$RISH_APPLICATION_ID" ] && export RISH_APPLICATION_ID="com.agy"
+# Bridges inject the app id. For manual use, derive it from the app-private prefix.
+RISH_APPLICATION_ID="${RISH_APPLICATION_ID:-${AGY_APPLICATION_ID:-}}"
+if [ -z "$RISH_APPLICATION_ID" ]; then
+  _AGY_APP_FILES="${PREFIX%/usr}"
+  _AGY_APP_DIR="${_AGY_APP_FILES%/files}"
+  RISH_APPLICATION_ID="${_AGY_APP_DIR##*/}"
+  unset _AGY_APP_FILES _AGY_APP_DIR
+fi
+if [ -z "$RISH_APPLICATION_ID" ]; then
+  echo "rish: cannot determine the Android application id from PREFIX=$PREFIX" >&2
+  exit 1
+fi
+export RISH_APPLICATION_ID
 exec env -u LD_PRELOAD -u LD_LIBRARY_PATH /system/bin/app_process -Djava.class.path="$DEX" /system/bin --nice-name=rish rikka.shizuku.shell.ShizukuShellLoader "$@"

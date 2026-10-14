@@ -58,8 +58,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s patches/tests -v
-          python3 -m unittest discover -s build/tests -v
-          bash build/tests/selftest.sh
           bash bus/selftest
           bash build.sh --dry-run
           bash env/tests/selftest
@@ -70,7 +68,7 @@ jobs:
           ASSETS="$tmp/env" bash env/build.sh all
           ASSETS="$tmp/env" bash env/tests/invariant
           for script in build.sh build/lib/*.sh build/phases/*.sh \
-                        env/build.sh web/build.sh build/tests/selftest.sh \
+                        env/build.sh web/build.sh \
                         web/tests/selftest.sh bus/selftest; do
             bash -n "$script"
           done

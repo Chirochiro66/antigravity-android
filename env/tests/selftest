@@ -70,6 +70,20 @@ vs 1.0   "="  1.0   0
 vs 1.0   ">>" 1.0   1
 vs 1:2.0 ">=" 2.0   0
 
+# ---- dependency closure -----------------------------------------------------
+cp "$FIX" "$PKG_INDEX/repo.1.Packages"
+index_rebuild_all
+resolved="$(resolve hello 2>/dev/null)"
+[ "$resolved" = $'libhello\nworld\nhello' ] \
+    && ok "dependency order + alternatives" || bad "dependency order + alternatives ($resolved)"
+provided="$(resolve glob 2>/dev/null)"
+[ "$provided" = "world" ] && ok "direct virtual provider" || bad "direct virtual provider ($provided)"
+if resolve missing-package >/dev/null 2>&1; then
+    bad "unresolved dependency rejected"
+else
+    ok "unresolved package rejected"
+fi
+
 # ---- .deb (ar + tar) -------------------------------------------------------
 DEB="$SELF/fixtures/hello.deb"
 if [ -f "$DEB" ]; then
@@ -81,6 +95,29 @@ if [ -f "$DEB" ]; then
 else
     printf 'SKIP  deb checks (no fixtures/hello.deb)\n'
 fi
+
+# ---- dynamic notification bridge -------------------------------------------
+NOTIFY_TMP="$(mktemp -d)"
+mkdir -p "$NOTIFY_TMP/bin"
+cat > "$NOTIFY_TMP/bin/rish" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$AGY_NOTIFY_CAPTURE"
+EOF
+chmod +x "$NOTIFY_TMP/bin/rish"
+export AGY_NOTIFY_CAPTURE="$NOTIFY_TMP/calls.log"
+if PREFIX="$NOTIFY_TMP" bash "$SELF/../overlay/bin/agy-notify" cancel task_123 \
+        && grep -Fq 'cmd notification cancel task_123' "$AGY_NOTIFY_CAPTURE"; then
+    ok "agy-notify cancel forwards its positional tag"
+else
+    bad "agy-notify cancel forwards its positional tag"
+fi
+if PREFIX="$NOTIFY_TMP" bash "$SELF/../overlay/bin/agy-notify" cancel >/dev/null 2>&1; then
+    bad "agy-notify rejects missing cancel tag"
+else
+    ok "agy-notify rejects missing cancel tag"
+fi
+rm -rf "$NOTIFY_TMP"
+unset AGY_NOTIFY_CAPTURE
 
 rm -rf "$(dirname "$PREFIX")"
 printf '== failures: %s ==\n' "$fail"

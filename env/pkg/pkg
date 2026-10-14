@@ -79,7 +79,7 @@ cmd_install() {
         [ -n "$(index_lookup "$name")" ] || [ -n "$(index_provider "$name")" ] \
             || db_exists "$name" || die "unknown package: $name"
     done
-    order="$(resolve "$@")"
+    order="$(resolve "$@")" || die "dependency resolution failed; no packages were installed"
     while IFS= read -r n; do
         [ -n "$n" ] || continue
         if db_exists "$n"; then log "already installed: $n"; continue; fi
@@ -116,7 +116,8 @@ cmd_upgrade() {
     fi
     log "upgrading ${#to_upgrade[@]} package(s): ${to_upgrade[*]}"
     for name in "${to_upgrade[@]}"; do
-        db_remove "$name"
+        # install_one writes the new .meta/.files only after extraction succeeds;
+        # keep the previous ownership record until that commit point.
         install_one "$name"
     done
 }

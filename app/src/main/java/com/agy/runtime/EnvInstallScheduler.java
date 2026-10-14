@@ -2,7 +2,9 @@ package com.agy.runtime;
 
 import android.util.Log;
 
+import com.agy.install.EnvBundleManifest;
 import com.agy.install.EnvInstaller;
+import com.agy.install.SeedPackageInstaller;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -28,12 +30,15 @@ public final class EnvInstallScheduler {
             public void run() {
                 try {
                     boolean fresh = EnvInstaller.install(rm.appContext());
+                    EnvBundleManifest manifest = EnvBundleManifest.load(rm.appContext().getAssets());
+                    boolean seeded = SeedPackageInstaller.installDefaults(
+                            rm.appContext(), EnvInstaller.prefix(rm.appContext()), manifest.seedPackages);
                     // The core is glibc and must not inherit bionic's LD_* vars,
-                    // so give it #!/system/bin/sh bridges in runtime/bin that set
-                    // the bionic env for the child only, then exec $PREFIX/bin/<tool>.
-                    // A fresh env install changes the tool set -> force the bulk pass.
-                    ShellBridgeInstaller.install(rm, fresh);
-                    Log.i(TAG, "env toolchain ready; runtime/bin bridges refreshed");
+                    // so bridges set the bionic env for each child only. Seeded
+                    // packages can add commands, so refresh the bridge inventory after them.
+                    ShellBridgeInstaller.install(rm, fresh || seeded);
+                    Log.i(TAG, "env ready; bundle=" + manifest.bundleId
+                            + " seeded=" + seeded + "; runtime/bin bridges refreshed");
                 } catch (Throwable e) {
                     started.set(false);
                     Log.e(TAG, "env install failed; core continues without bionic tools: "

@@ -9,6 +9,8 @@ import android.util.Log;
 
 import com.agy.runtime.RuntimeManager;
 
+import java.io.File;
+
 /**
  * Foreground host for the patched core (language_server). Holds a wake lock,
  * streams the process log to files/logs/core.log, and publishes serverUrl once
@@ -52,6 +54,45 @@ public final class CoreServerService extends Service {
         supervisor = new CoreProcessSupervisor(this, runtime, openUrlWatcher,
                 this::onSupervisorTerminated);
         supervisor.start();
+
+        startBackgroundDaemon();
+    }
+
+    private void startBackgroundDaemon() {
+        new Thread(() -> {
+            try {
+                // Give runtime environment a brief moment to stabilize
+                Thread.sleep(1500);
+                File daemonBin = new File(getFilesDir(), "usr/bin/agy-daemon");
+                if (daemonBin.canExecute()) {
+                    Log.i(TAG, "Starting autonomous background daemon...");
+                    ProcessBuilder pb = new ProcessBuilder(daemonBin.getAbsolutePath(), "start");
+                    pb.directory(getFilesDir());
+                    pb.environment().put("PATH", getFilesDir().getAbsolutePath() + "/usr/bin:" + System.getenv("PATH"));
+                    pb.environment().put("HOME", getFilesDir().getAbsolutePath());
+                    pb.start();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to start agy-daemon: " + e.getMessage());
+            }
+        }, "AgyDaemonStarter").start();
+    }
+
+    private void stopBackgroundDaemon() {
+        try {
+            File daemonBin = new File(getFilesDir(), "usr/bin/agy-daemon");
+            if (daemonBin.canExecute()) {
+                Log.i(TAG, "Stopping autonomous background daemon...");
+                ProcessBuilder pb = new ProcessBuilder(daemonBin.getAbsolutePath(), "stop");
+                pb.directory(getFilesDir());
+                pb.environment().put("PATH", getFilesDir().getAbsolutePath() + "/usr/bin:" + System.getenv("PATH"));
+                pb.environment().put("HOME", getFilesDir().getAbsolutePath());
+                Process p = pb.start();
+                p.waitFor();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to stop agy-daemon: " + e.getMessage());
+        }
     }
 
     private void onSupervisorTerminated() {
@@ -83,6 +124,7 @@ public final class CoreServerService extends Service {
 
     @Override
     public void onDestroy() {
+        stopBackgroundDaemon();
         destroyed = true;
         mainHandler.removeCallbacksAndMessages(null);
         // Intentional stop: the watchdog must not treat the exit as a crash.

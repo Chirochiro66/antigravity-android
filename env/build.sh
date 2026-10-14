@@ -24,6 +24,8 @@ pack_assets() {
     cp -a "$ENV_DIR/pkg"     "$ASSETS/env/pkg"
     cp -a "$ENV_DIR/overlay" "$ASSETS/env/overlay"
     cp -f "$ENV_DIR/bootstrap/bootstrap.tar.gz" "$ASSETS/env/bootstrap/"
+    [ -f "$ENV_DIR/seed-packages.txt" ] && cp -f "$ENV_DIR/seed-packages.txt" "$ASSETS/env/seed-packages.txt" || true
+    python3 "$ENV_DIR/scripts/make_manifest.py" "$ASSETS/env"
     log "assets -> $ASSETS"
     find "$ASSETS" -maxdepth 3 | sed 's/^/  /' >&2
 }

@@ -50,24 +50,55 @@ deb_member_name() { # FILE control|data
 }
 
 deb_field() { # FILE FIELD -> value (authoritative control)
-    local f="$1" field="$2" m tmp val
+    local f="$1" field="$2" m control_path val
     m="$(deb_member_name "$f" control)"
     [ -n "$m" ] || return 1
-    tmp="$(mktemp -d)"
-    ar_member "$f" "$m" | deb_decode "$m" | tar -x -C "$tmp" 2>/dev/null
-    val="$(awk -v k="$field" 'index($0, k":") == 1 { sub(/^[^:]*: /, ""); print; exit }' "$tmp/control")"
-    rm -rf "$tmp"
+    control_path="$(ar_member "$f" "$m" | deb_decode "$m" | tar -tf - 2>/dev/null \
+        | awk '$0 == "./control" || $0 == "control" { print; exit }')"
+    [ -n "$control_path" ] || return 1
+    val="$(ar_member "$f" "$m" | deb_decode "$m" \
+        | tar -xOf - "$control_path" 2>/dev/null \
+        | awk -v k="$field" 'index($0, k":") == 1 { sub(/^[^:]*: /, ""); print; exit }')"
     printf '%s\n' "$val"
 }
 
-deb_extract_data() { # FILE DEST [STRIP]
-    local m; m="$(deb_member_name "$1" data)"
+deb_validate_data() { # FILE -- reject absolute/traversal/non-prefix entries
+    local m
+    m="$(deb_member_name "$1" data)"
     [ -n "$m" ] || return 1
-    ar_member "$1" "$m" | deb_decode "$m" | tar -x --strip-components="${3:-6}" -C "$2" 2>/dev/null
+    ar_member "$1" "$m" | deb_decode "$m" | tar -tf - 2>/dev/null | awk '
+        {
+            path = $0
+            if (path == "" || substr(path, 1, 1) == "/" || index(path, "\\") > 0) {
+                bad = 1; next
+            }
+            if (path == "./" || path == ".") next
+            if (substr(path, 1, 2) != "./") { bad = 1; next }
+            path = substr(path, 3)
+            if (substr(path, length(path), 1) == "/") path = substr(path, 1, length(path) - 1)
+            n = split(path, part, "/")
+            if (part[1] != "data") { bad = 1; next }
+            if (n >= 2 && part[2] != "data") { bad = 1; next }
+            if (n >= 3 && part[3] !~ /^[A-Za-z0-9][A-Za-z0-9+._-]*$/) { bad = 1; next }
+            if (n >= 4 && part[4] != "files") { bad = 1; next }
+            if (n >= 5 && part[5] != "usr") { bad = 1; next }
+            for (i = 1; i <= n; i++) if (part[i] == ".." || part[i] == ".") bad = 1
+        }
+        END { if (bad) exit 1 }
+    '
+}
+
+deb_extract_data() { # FILE DEST [STRIP]
+    local m strip="${3:-${PKG_DEB_STRIP:-6}}"
+    deb_validate_data "$1" || return 1
+    m="$(deb_member_name "$1" data)"
+    [ -n "$m" ] || return 1
+    ar_member "$1" "$m" | deb_decode "$m" | tar -x --strip-components="$strip" -C "$2" 2>/dev/null
 }
 
 deb_files() { # FILE -> relative paths under the stripped data prefix
     local m strip="${PKG_DEB_STRIP:-6}"
+    deb_validate_data "$1" || return 1
     m="$(deb_member_name "$1" data)"
     [ -n "$m" ] || return 1
     # Strip the leading N path components by position instead of matching a

@@ -12,12 +12,15 @@ public final class TarPath {
     }
 
     public static String normalize(String rawName) {
+        if (rawName == null) {
+            return null;
+        }
         String name = rawName.replace('\\', '/');
+        if (name.startsWith("/")) {
+            return null;
+        }
         while (name.startsWith("./")) {
             name = name.substring(2);
-        }
-        while (name.startsWith("/")) {
-            name = name.substring(1);
         }
         if (name.isEmpty() || ".".equals(name)) {
             return "";

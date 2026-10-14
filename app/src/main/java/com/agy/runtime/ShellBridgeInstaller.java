@@ -126,8 +126,9 @@ public final class ShellBridgeInstaller {
             Log.w(TAG, "prefix bash missing (" + prefixBash + "); keeping fallback shell bridges");
             return;
         }
-        writeBridge(new File(bin, "bash"), prefix, "bash");
-        writeBridge(new File(bin, "sh"), prefix, "bash");
+        String appId = rm.appContext().getPackageName();
+        writeBridge(new File(bin, "bash"), prefix, "bash", appId);
+        writeBridge(new File(bin, "sh"), prefix, "bash", appId);
         File[] prefixTools = new File(prefix, "bin").listFiles();
         int toolCount = countFiles(prefixTools);
         File marker = new File(bin, BRIDGE_MARKER);
@@ -141,7 +142,7 @@ public final class ShellBridgeInstaller {
                     if ("rish".equals(name) || isOpenUrlShim(name)) {
                         continue;
                     }
-                    writeBridge(new File(bin, name), prefix, name);
+                    writeBridge(new File(bin, name), prefix, name, appId);
                 }
             }
         }
@@ -225,13 +226,14 @@ public final class ShellBridgeInstaller {
      * POSIX shell, no bionic env needed), which then sets PREFIX/LD_LIBRARY_PATH/
      * LD_PRELOAD/PATH for the bionic child only and execs it.
      */
-    private static void writeBridge(File bridge, File prefix, String target) {
+    private static void writeBridge(File bridge, File prefix, String target, String appId) {
         String p = ShellQuote.quote(prefix.getAbsolutePath());
         StringBuilder sb = new StringBuilder();
         sb.append("#!/system/bin/sh\n");
         sb.append("# AGY bridge -> bionic $PREFIX/bin/").append(target).append('\n');
         sb.append("PREFIX=").append(p).append('\n');
-        sb.append("export PREFIX\n");
+        sb.append("AGY_APPLICATION_ID=").append(ShellQuote.quote(appId)).append('\n');
+        sb.append("export PREFIX AGY_APPLICATION_ID\n");
         sb.append("if [ -f \"$PREFIX/lib/libtermux-exec.so\" ]; then\n");
         sb.append("  export LD_PRELOAD=\"$PREFIX/lib/libtermux-exec.so\"\n");
         sb.append("else\n");

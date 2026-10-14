@@ -18,7 +18,12 @@ public final class PkgInstaller {
     }
 
     public static void install(AssetManager assets, File prefix) {
-        File libexec = new File(prefix, "libexec/pkg");
+        install(assets, prefix, prefix.getAbsolutePath());
+    }
+
+    /** Installs into a staging root while generating scripts for the stable prefix path. */
+    public static void install(AssetManager assets, File root, String targetPrefix) {
+        File libexec = new File(root, "libexec/pkg");
         if (!libexec.isDirectory() && !libexec.mkdirs() && !libexec.isDirectory()) {
             throw new IllegalStateException("cannot create " + libexec);
         }
@@ -28,7 +33,7 @@ public final class PkgInstaller {
             throw new IllegalStateException("required asset missing: " + EnvPaths.ASSET_PKG + "/pkg");
         }
         FileModeUtil.setExec(script);
-        writeWrapper(new File(prefix, "bin/pkg"), prefix);
+        writeWrapper(new File(root, "bin/pkg"), new File(targetPrefix));
     }
 
     private static void writeWrapper(File wrapper, File prefix) {

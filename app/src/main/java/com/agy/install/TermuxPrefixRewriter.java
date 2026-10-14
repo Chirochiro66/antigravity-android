@@ -24,13 +24,17 @@ public final class TermuxPrefixRewriter {
     }
 
     public static void rewrite(File prefix) {
-        String newPrefix = prefix.getAbsolutePath();
+        rewrite(prefix, prefix.getAbsolutePath());
+    }
+
+    /** Rewrites a staging tree while emitting paths for its eventual install location. */
+    public static void rewrite(File root, String targetPrefix) {
         int rewritten = 0;
         for (String dir : EnvPaths.SCRIPT_DIRS) {
-            rewritten += rewriteIn(new File(prefix, dir), newPrefix);
+            rewritten += rewriteIn(new File(root, dir), targetPrefix);
         }
         if (rewritten > 0) {
-            Log.i(TAG, "rewrote termux paths in " + rewritten + " file(s) -> " + newPrefix);
+            Log.i(TAG, "rewrote termux paths in " + rewritten + " file(s) -> " + targetPrefix);
         }
     }
 
