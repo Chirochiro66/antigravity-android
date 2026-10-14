@@ -3,6 +3,7 @@ package com.agy.shell;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
@@ -106,9 +107,7 @@ public final class IntentBridge {
         if (!apk.isFile()) {
             return "error: apk not found: " + apkPath;
         }
-        if (!context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_PACKAGE_INSTALLER)) {
-            return "error: PackageInstaller unavailable on this device";
-        }
+
         PackageInstaller installer = context.getPackageManager().getPackageInstaller();
         if (installer == null) {
             return "error: PackageInstaller service unavailable";
@@ -171,21 +170,31 @@ public final class IntentBridge {
     }
 
     private String cmdBattery(String prop) {
-        BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
-        if (bm == null) {
+        Intent batteryStatus = context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        if (batteryStatus == null) {
+            BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+            if (bm != null && "level".equals(prop)) {
+                return Integer.toString(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY));
+            }
             return "error: BatteryManager unavailable";
         }
         switch (prop) {
-            case "level":
-                return Integer.toString(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY));
+            case "level": {
+                int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                if (level >= 0 && scale > 0) {
+                    return Integer.toString((int) ((level / (float) scale) * 100));
+                }
+                return Integer.toString(level);
+            }
             case "status":
-                return Integer.toString(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS));
+                return Integer.toString(batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1));
             case "plugged":
-                return Integer.toString(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_PLUGGED));
+                return Integer.toString(batteryStatus.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1));
             case "temperature":
-                return Integer.toString(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_TEMPERATURE));
+                return Integer.toString(batteryStatus.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1));
             case "voltage":
-                return Integer.toString(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_VOLTAGE));
+                return Integer.toString(batteryStatus.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1));
             default:
                 return "error: unknown battery property: " + prop;
         }
